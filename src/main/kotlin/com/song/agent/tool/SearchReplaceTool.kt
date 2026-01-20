@@ -2,6 +2,7 @@ package com.song.agent.tool
 
 import ai.koog.agents.core.tools.Tool
 import ai.koog.agents.core.tools.annotations.LLMDescription
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.serializer
 import java.nio.file.Path
@@ -10,12 +11,12 @@ import kotlin.io.path.exists
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
 
-class ApplyPatchTool(
+class SearchReplaceTool(
     root: Path
-) : Tool<ApplyPatchTool.Args, String>(
+) : Tool<SearchReplaceTool.Args, String>(
     argsSerializer = Args.serializer(),
     resultSerializer = String.serializer(),
-    name = "apply_patch",
+    name = "search_replace",
     description = TOOL_DESCRIPTION
 ) {
 
@@ -23,20 +24,21 @@ class ApplyPatchTool(
 
     @Serializable
     data class Args(
+        @SerialName("file_path")
         @property:LLMDescription("Path to the file to be patched.")
-        val path: String,
+        val filePath: String,
         @property:LLMDescription("Diff to apply in the simple SEARCH/REPLACE block format.")
-        val diff: String
+        val content: String
     )
 
     override suspend fun execute(args: Args): String {
-        val fullPath = rootNorm.resolve(args.path).normalize()
+        val fullPath = rootNorm.resolve(args.filePath).normalize()
 
         if (!fullPath.startsWith(rootNorm)) {
-            throw IllegalArgumentException("filePath '${args.path}' is outside of project root.")
+            throw IllegalArgumentException("filePath '${args.filePath}' is outside of project root.")
         }
 
-        val edits = parseSearchReplaceBlocks(args.diff)
+        val edits = parseSearchReplaceBlocks(args.content)
 
         if (edits.isEmpty()) {
             return "No SEARCH/REPLACE blocks found. Nothing to apply."
@@ -67,21 +69,21 @@ class ApplyPatchTool(
             fullPath.writeText(content)
 
             val blocksWord = if (passed.size == 1) "block" else "blocks"
-            return "Successfully applied ${passed.size} SEARCH/REPLACE $blocksWord to ${args.path}."
+            return "Successfully applied ${passed.size} SEARCH/REPLACE $blocksWord to ${args.filePath}."
         }
 
         val blocksWord = if (failed.size == 1) "block" else "blocks"
         val sb = StringBuilder()
-        sb.appendLine("# ${failed.size} SEARCH/REPLACE $blocksWord failed to match in ${args.path}!")
+        sb.appendLine("# ${failed.size} SEARCH/REPLACE $blocksWord failed to match in ${args.filePath}!")
 
         for ((index, edit) in failed.withIndex()) {
             sb.appendLine()
             sb.appendLine("## SearchReplaceNoExactMatch #${index + 1}")
-            sb.appendLine("This SEARCH block failed to exactly match any lines in ${args.path}:")
+            sb.appendLine("This SEARCH block failed to exactly match any lines in ${args.filePath}:")
 
             val didYouMean = findSimilarLines(edit.search, content)
             if (didYouMean.isNotBlank()) {
-                sb.appendLine("Did you mean to match some of these actual lines from ${args.path}?")
+                sb.appendLine("Did you mean to match some of these actual lines from ${args.filePath}?")
                 sb.appendLine("```")
                 sb.appendLine(didYouMean)
                 sb.appendLine("```")
@@ -91,7 +93,7 @@ class ApplyPatchTool(
             if (edit.replace.isNotBlank() && content.contains(edit.replace)) {
                 sb.appendLine(
                     "Are you sure you still need this SEARCH/REPLACE block?\n" +
-                            "The REPLACE lines are already present in ${args.path}!\n"
+                            "The REPLACE lines are already present in ${args.filePath}!\n"
                 )
             }
         }
@@ -260,49 +262,49 @@ class ApplyPatchTool(
 
     companion object {
         private val TOOL_DESCRIPTION = """
-Use the `apply_patch` tool to edit files.
+Use `search_replace` to make targeted changes to files using SEARCH/REPLACE blocks. This tool finds exact text matches and replaces them.
 
-# *SEARCH/REPLACE block* Rules:
+Arguments:
+- `file_path`: The path to the file to modify
+- `content`: The SEARCH/REPLACE blocks defining the changes
 
-Every *SEARCH/REPLACE block* must use this format:
-1. The start of search block: <<<<<<< SEARCH
-2. A contiguous chunk of lines to search for in the existing source code
-3. The dividing line: =======
-4. The lines to replace into the source code
-5. The end of the replace block: >>>>>>> REPLACE
+The content format is:
 
-Every *SEARCH* section must *EXACTLY MATCH* the existing file content, character for character, including all comments, docstrings, etc.
-
-*SEARCH/REPLACE* blocks will replace *all* matching occurrences.
-Include enough lines to make the SEARCH blocks uniquely match the lines to change.
-
-Keep *SEARCH/REPLACE* blocks concise.
-Break large *SEARCH/REPLACE* blocks into a series of smaller blocks that each change a small portion of the file.
-Include just the changing lines, and a few surrounding lines if needed for uniqueness.
-Do not include long runs of unchanging lines in *SEARCH/REPLACE* blocks.
-
-ONLY EVER RETURN CODE IN A *SEARCH/REPLACE BLOCK*!
-
-Sample 1:
-
+```
 <<<<<<< SEARCH
-[content to find]
+[exact text to find in the file]
 =======
-[content to replace with]
+[exact text to replace it with]
+>>>>>>> REPLACE
+```
+
+You can include multiple SEARCH/REPLACE blocks to make multiple changes to the same file:
+
+```
+<<<<<<< SEARCH
+def old_function():
+    return "old value"
+=======
+def new_function():
+    return "new value"
 >>>>>>> REPLACE
 
-Sample 2:
+<<<<<<< SEARCH
+import os
+=======
+import os
+import sys
+>>>>>>> REPLACE
+```
 
-<<<<<<< SEARCH
-First text to find
-=======
-First replacement
->>>>>>> REPLACE
-<<<<<<< SEARCH
-Second text to find
-=======
-Second replacement
->>>>>>> REPLACE
+IMPORTANT:
+
+- The SEARCH text must match EXACTLY (including whitespace, indentation, and line endings)
+- The SEARCH text must appear exactly once in the file - if it appears multiple times, the tool will error
+- Use at least 5 equals signs (=====) between SEARCH and REPLACE sections
+- The tool will provide detailed error messages showing context if search text is not found
+- Each search/replace block is applied in order, so later blocks see the results of earlier ones
+- Be careful with escape sequences in string literals - use \n not \\n for newlines in code
 """.trimIndent()
     }
 }
