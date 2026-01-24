@@ -6,6 +6,8 @@ import com.song.cli.parseArgs
 import com.song.db.RunSummary
 import com.song.db.loadFindingsForRun
 import com.song.db.loadLatestRun
+import com.song.detekt.DetektConfigContext
+import com.song.detekt.loadDetektConfig
 import com.song.detekt.runGradleDetekt
 import com.song.di.startAgentKoin
 import com.song.ingest.ingest
@@ -20,6 +22,7 @@ fun main(raw: Array<String>) {
     val projectRoot = args.project
     require(projectRoot.isDirectory) { "Project root is not a directory: ${projectRoot.absolutePath}" }
     val koinApp = startAgentKoin(projectRoot.toPath())
+    val detektConfig = loadDetektConfig(projectRoot.toPath())
 
     val task = args.task ?: ":${args.module}:detekt"
 
@@ -42,7 +45,7 @@ fun main(raw: Array<String>) {
             }
             "l" -> listFindings(latestFindings)
             "s" -> showFinding(latestFindings)
-            "f" -> fixAllFindings(latestFindings, agent)
+            "f" -> fixAllFindings(agent, detektConfig, latestFindings)
             "q" -> return
             else -> println("Unknown choice. Use r/l/s/f/q.")
         }
@@ -102,7 +105,15 @@ private fun showFinding(findings: List<Finding>) {
     println("Range: ${finding.startLine ?: "?"}:${finding.startColumn ?: "?"} - ${finding.endLine ?: "?"}:${finding.endColumn ?: "?"}")
 }
 
-private fun fixAllFindings(findings: List<Finding>, agent: CodeSmellAgent) {
+private fun fixAllFindings(
+    agent: CodeSmellAgent,
+    detektConfig: DetektConfigContext?,
+    findings: List<Finding>
+) {
+    if (detektConfig == null) {
+        println("Detekt config not found. Skipping agent execution.")
+        return
+    }
     if (findings.isEmpty()) {
         println("No findings to fix.")
         return
@@ -111,7 +122,7 @@ private fun fixAllFindings(findings: List<Finding>, agent: CodeSmellAgent) {
         for ((index, finding) in findings.withIndex()) {
             val fileLabel = finding.absolutePath ?: finding.uri ?: "unknown"
             println("Fixing finding ${index + 1}/${findings.size}: ${finding.ruleId} @ $fileLabel")
-            val result = agent.start(finding)
+            val result = agent.start(finding, detektConfig)
             println("Agent result: $result")
         }
     }
