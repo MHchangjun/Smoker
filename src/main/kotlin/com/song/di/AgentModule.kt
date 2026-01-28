@@ -3,6 +3,7 @@ package com.song.di
 import com.song.agent.CodeSmellAgent
 import com.song.agent.tool.SearchReplaceTool
 import com.song.agent.tool.ShellCommandTool
+import com.song.agent.tool.StrictEditTool
 import com.song.agent.tool.TodoTool
 import org.koin.core.KoinApplication
 import org.koin.core.module.Module
@@ -16,6 +17,7 @@ fun agentModule(root: Path): Module = module {
     single { SearchReplaceTool(get()) }
     single { TodoTool() }
     single { CodeSmellAgent(get(), get(), get()) }
+    single { StrictEditTool(get()) }
 }
 
 fun startAgentKoin(root: Path): KoinApplication {
