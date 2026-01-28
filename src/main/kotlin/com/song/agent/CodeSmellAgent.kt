@@ -6,7 +6,9 @@ import ai.koog.agents.core.agent.singleRunStrategy
 import ai.koog.agents.core.tools.ToolRegistry
 import ai.koog.agents.features.eventHandler.feature.EventHandler
 import ai.koog.prompt.dsl.prompt
-import ai.koog.prompt.executor.llms.all.simpleOllamaAIExecutor
+import ai.koog.prompt.executor.clients.openai.OpenAIClientSettings
+import ai.koog.prompt.executor.clients.openai.OpenAILLMClient
+import ai.koog.prompt.executor.llms.SingleLLMPromptExecutor
 import ai.koog.prompt.params.LLMParams
 import com.song.agent.prompt.SYSTEM_PROMPT
 import com.song.agent.tool.SearchReplaceTool
@@ -34,8 +36,14 @@ class CodeSmellAgent(
     }
 
     private fun buildAgentService(): AIAgentService<String, String, *> {
+        val executor = SingleLLMPromptExecutor(
+            OpenAILLMClient(
+                "",
+                OpenAIClientSettings("http://172.16.20.134:8080")
+            )
+        )
         return AIAgentService(
-            promptExecutor = simpleOllamaAIExecutor(),
+            promptExecutor = executor,
             agentConfig = AIAgentConfig(
                 prompt = prompt(
                     "smoker",
