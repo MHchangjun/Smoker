@@ -1,6 +1,7 @@
 package com.song
 
 import com.song.agent.CodeSmellAgent
+import com.song.agent.TestAgent
 import com.song.cli.Args
 import com.song.cli.parseArgs
 import com.song.db.RunSummary
@@ -32,10 +33,11 @@ fun main(raw: Array<String>) {
     printSummary(args, latestRun, latestFindings)
 
     val agent = koinApp.koin.get<CodeSmellAgent>()
+    val testAgent = koinApp.koin.get<TestAgent>()
 
     while (true) {
         println()
-        println("Select action: [r]escan, [l]ist, [s]how, [f]ix, [q]uit")
+        println("Select action: [r]escan, [l]ist, [s]how, [f]ix, [t]est, [q]uit")
         when (readChoice()) {
             "r" -> {
                 val (run, findings) = rescan(projectRoot, args, task)
@@ -46,8 +48,9 @@ fun main(raw: Array<String>) {
             "l" -> listFindings(latestFindings)
             "s" -> showFinding(latestFindings)
             "f" -> fixAllFindings(agent, detektConfig, latestFindings)
+            "t" -> runTestAgent(testAgent)
             "q" -> return
-            else -> println("Unknown choice. Use r/l/s/f/q.")
+            else -> println("Unknown choice. Use r/l/s/f/t/q.")
         }
     }
 }
@@ -125,6 +128,14 @@ private fun fixAllFindings(
             val result = agent.start(finding, detektConfig)
             println("Agent result: $result")
         }
+    }
+}
+
+private fun runTestAgent(agent: TestAgent) {
+    runBlocking {
+        println("Running test agent...")
+        val result = agent.start()
+        println("Test agent result: $result")
     }
 }
 

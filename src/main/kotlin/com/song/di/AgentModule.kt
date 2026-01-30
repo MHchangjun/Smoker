@@ -1,8 +1,11 @@
 package com.song.di
 
 import com.song.agent.CodeSmellAgent
+import com.song.agent.TestAgent
+import com.song.agent.tool.BashTool
+import com.song.agent.tool.GrepTool
+import com.song.agent.tool.ReadFileTool
 import com.song.agent.tool.SearchReplaceTool
-import com.song.agent.tool.ShellCommandTool
 import com.song.agent.tool.StrictEditTool
 import com.song.agent.tool.TodoTool
 import org.koin.core.KoinApplication
@@ -13,10 +16,34 @@ import java.nio.file.Path
 
 fun agentModule(root: Path): Module = module {
     single { root }
-    single { ShellCommandTool() }
+
+    single {
+        BashTool(
+            BashTool.Config(
+                workDir = root.toFile(),
+            )
+        )
+    }
+
+    single {
+        GrepTool(
+            GrepTool.Config(
+                workDir = root.toFile()
+            )
+        )
+    }
+
+    single {
+        ReadFileTool(
+            ReadFileTool.Config(
+                workDir = root.toFile()
+            )
+        )
+    }
     single { SearchReplaceTool(get()) }
     single { TodoTool() }
     single { CodeSmellAgent(get(), get(), get()) }
+    single { TestAgent(get(), get(), get(), get(), get()) }
     single { StrictEditTool(get()) }
 }
 

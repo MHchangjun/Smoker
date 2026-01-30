@@ -11,8 +11,8 @@ import ai.koog.prompt.executor.clients.openai.OpenAILLMClient
 import ai.koog.prompt.executor.llms.SingleLLMPromptExecutor
 import ai.koog.prompt.params.LLMParams
 import com.song.agent.prompt.SYSTEM_PROMPT
+import com.song.agent.tool.BashTool
 import com.song.agent.tool.SearchReplaceTool
-import com.song.agent.tool.ShellCommandTool
 import com.song.agent.tool.TodoTool
 import com.song.detekt.DetektConfigContext
 import com.song.sarif.Finding
@@ -21,7 +21,7 @@ import java.nio.file.Path
 import java.nio.file.Paths
 
 class CodeSmellAgent(
-    private val shellCommandTool: ShellCommandTool,
+    private val baseTool: BashTool,
     private val searchReplaceTool: SearchReplaceTool,
     private val todoTool: TodoTool
 ) {
@@ -51,7 +51,7 @@ class CodeSmellAgent(
                 ) {
                     system(SYSTEM_PROMPT)
                 },
-                model = Model.DEVSTRAL,
+                model = Model.DEVSTRAL_LLAMA_CPP,
                 maxAgentIterations = 1000
             ),
             strategy = singleRunStrategy(),
@@ -76,7 +76,7 @@ class CodeSmellAgent(
             },
             toolRegistry = ToolRegistry {
                 tool(searchReplaceTool)
-                tool(shellCommandTool)
+                tool(baseTool)
                 tool(todoTool)
             }
         )
