@@ -1,7 +1,6 @@
 package com.song.agent.prompt
 
 enum class UtilityPrompt(private val resourcePath: String) {
-    COMPACT("/prompts/compact.md"),
     PROJECT_CONTEXT("/prompts/project_context.md");
 
     fun read(): String {

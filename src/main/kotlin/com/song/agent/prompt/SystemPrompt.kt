@@ -23,12 +23,6 @@ object SystemPrompt {
                 append(doc)
             }
 
-            val compactPrompt = UtilityPrompt.COMPACT.read()
-            if (compactPrompt.isNotBlank()) {
-                append("\n\n---\n")
-                append(compactPrompt)
-            }
-
             val projectContext = ProjectContextProvider(ProjectContextConfig()).getFullContext()
             if (projectContext.isNotBlank()) {
                 append("\n\n")

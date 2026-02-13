@@ -53,7 +53,7 @@ Find all ViewModels that reference any *Repository* directly. Exclude tests. Out
             installFeatures = {
                 install(EventHandler.Feature) {
                     onAgentStarting { ctx ->
-                        log("AgentStart", ctx.context.agentInput)
+                        log("AgentStart", ctx.context.config.prompt.messages.joinToString("\n"))
                     }
 
                     onAgentCompleted { ctx ->
