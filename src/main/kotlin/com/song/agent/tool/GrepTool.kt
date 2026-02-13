@@ -8,27 +8,14 @@ import java.io.File
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 
-/**
- * Koog migration of the original "grep" tool.
- *
- * - Tool name: grep
- * - Args: { pattern, path=".", max_matches?, use_default_ignore=true }
- * - Result: { matches, match_count, was_truncated }
- *
- * The tool description is loaded from grep.md (resources) to keep the prompt unchanged.
- */
 class GrepTool(
     private val config: Config = Config()
 ) : Tool<GrepTool.Args, GrepTool.Result>(
     argsSerializer = Args.serializer(),
     resultSerializer = Result.serializer(),
-    name = NAME,
-    description = ToolPrompts.grep,
+    name = "grep",
+    description = "Recursively search files for a regex pattern using ripgrep (rg) or grep. Respects .gitignore and .codeignore files by default when using ripgrep.",
 ) {
-
-    companion object {
-        const val NAME = "grep"
-    }
 
     data class Config(
         val workDir: File = File(System.getProperty("user.dir")),

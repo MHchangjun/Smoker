@@ -5,27 +5,14 @@ import ai.koog.agents.core.tools.annotations.LLMDescription
 import kotlinx.serialization.Serializable
 import java.io.File
 
-/**
- * Koog migration of the original "read_file" tool.
- *
- * - Tool name: read_file
- * - Args: { path, offset=0, limit? }
- * - Result: { path, content, lines_read, was_truncated }
- *
- * The tool description is loaded from read_file.md (resources) to keep the prompt unchanged.
- */
 class ReadFileTool(
     private val config: Config = Config()
 ) : Tool<ReadFileTool.Args, ReadFileTool.Result>(
     argsSerializer = Args.serializer(),
     resultSerializer = Result.serializer(),
-    name = NAME,
-    description = ToolPrompts.read_file,
+    name = "read_file",
+    description = "Read a UTF-8 file, returning content from a specific line range. Reading is capped by a byte limit for safety."
 ) {
-
-    companion object {
-        const val NAME = "read_file"
-    }
 
     data class Config(
         val workDir: File = File(System.getProperty("user.dir")),

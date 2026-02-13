@@ -22,13 +22,9 @@ class BashTool(
 ) : Tool<BashTool.Args, BashTool.Result>(
     argsSerializer = Args.serializer(),
     resultSerializer = Result.serializer(),
-    name = NAME,
-    description = ToolPrompts.bash,
+    name = "bash",
+    description = "Run a one-off bash command and capture its output."
 ) {
-
-    companion object {
-        const val NAME = "bash"
-    }
 
     data class Config(
         val workDir: File = File(System.getProperty("user.dir")),

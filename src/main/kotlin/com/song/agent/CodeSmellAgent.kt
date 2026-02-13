@@ -12,8 +12,11 @@ import ai.koog.prompt.executor.llms.SingleLLMPromptExecutor
 import ai.koog.prompt.params.LLMParams
 import com.song.agent.prompt.SYSTEM_PROMPT
 import com.song.agent.tool.BashTool
+import com.song.agent.tool.GrepTool
+import com.song.agent.tool.ReadFileTool
 import com.song.agent.tool.SearchReplaceTool
 import com.song.agent.tool.TodoTool
+import com.song.agent.tool.WriteFileTool
 import com.song.detekt.DetektConfigContext
 import com.song.sarif.Finding
 import java.nio.file.Files
@@ -23,7 +26,10 @@ import java.nio.file.Paths
 class CodeSmellAgent(
     private val baseTool: BashTool,
     private val searchReplaceTool: SearchReplaceTool,
-    private val todoTool: TodoTool
+    private val todoTool: TodoTool,
+    private val grepTool: GrepTool,
+    private val readFileTool: ReadFileTool,
+    private val writeFileTool: WriteFileTool,
 ) {
     suspend fun start(finding: Finding, detektConfig: DetektConfigContext): String {
         val userPrompt = buildUserPrompt(finding, detektConfig)
@@ -78,6 +84,9 @@ class CodeSmellAgent(
                 tool(searchReplaceTool)
                 tool(baseTool)
                 tool(todoTool)
+                tool(grepTool)
+                tool(readFileTool)
+                tool(writeFileTool)
             }
         )
     }

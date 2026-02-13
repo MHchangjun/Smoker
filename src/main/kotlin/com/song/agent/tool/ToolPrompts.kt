@@ -5,14 +5,22 @@ package com.song.agent.tool
  *
  * Put the markdown files under:
  *   src/main/resources/
- *     - bash.md
- *     - grep.md
- *     - read_file.md
+ *     prompts/cli.md
+ *     tools/builtins/prompts/
+ *       - bash.md
+ *       - grep.md
+ *       - read_file.md
+ *       - search_replace.md
+ *       - todo.md
+ *       - write_file.md
  */
 object ToolPrompts {
-    val bash: String by lazy { readResource("/bash.md") }
-    val grep: String by lazy { readResource("/grep.md") }
-    val read_file: String by lazy { readResource("/read_file.md") }
+    val bash: String by lazy { readResource("/tools/builtins/prompts/bash.md") }
+    val grep: String by lazy { readResource("/tools/builtins/prompts/grep.md") }
+    val read_file: String by lazy { readResource("/tools/builtins/prompts/read_file.md") }
+    val search_replace: String by lazy { readResource("/tools/builtins/prompts/search_replace.md") }
+    val todo: String by lazy { readResource("/tools/builtins/prompts/todo.md") }
+    val write_file: String by lazy { readResource("/tools/builtins/prompts/write_file.md") }
 
     private fun readResource(path: String): String {
         val stream = ToolPrompts::class.java.getResourceAsStream(path)
