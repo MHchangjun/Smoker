@@ -12,7 +12,6 @@ object SystemPrompt {
             ToolPrompts.bash,
             ToolPrompts.grep,
             ToolPrompts.read_file,
-            ToolPrompts.todo,
             ToolPrompts.write_file
         )
 

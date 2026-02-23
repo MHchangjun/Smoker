@@ -45,7 +45,7 @@ fun agentModule(root: Path): Module = module {
     single { SearchReplaceTool(get()) }
     single { TodoTool() }
     single { CodeSmellAgent(get(), get(), get(), get(), get(), get()) }
-    single { TestAgent(get(), get(), get(), get(), get(), get()) }
+    single { TestAgent(get(), get(), get(), get(), get()) }
 }
 
 fun startAgentKoin(root: Path): KoinApplication {

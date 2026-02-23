@@ -13,14 +13,12 @@ import com.song.agent.tool.BashTool
 import com.song.agent.tool.GrepTool
 import com.song.agent.tool.ReadFileTool
 import com.song.agent.tool.SearchReplaceTool
-import com.song.agent.tool.TodoTool
 import com.song.agent.tool.WriteFileTool
 
 class TestAgent(
     private val bashTool: BashTool,
     private val grepTool: GrepTool,
     private val searchReplaceTool: SearchReplaceTool,
-    private val todoTool: TodoTool,
     private val readFileTool: ReadFileTool,
     private val writeFileTool: WriteFileTool,
 ) {
@@ -78,7 +76,6 @@ Find all ViewModels that reference any *Repository* directly. Exclude tests. Out
             toolRegistry = ToolRegistry {
                 tool(searchReplaceTool)
                 tool(bashTool)
-                tool(todoTool)
                 tool(grepTool)
                 tool(readFileTool)
                 tool(writeFileTool)
