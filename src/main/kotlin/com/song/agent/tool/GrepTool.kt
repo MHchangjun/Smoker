@@ -14,7 +14,7 @@ class GrepTool(
     argsSerializer = Args.serializer(),
     resultSerializer = Result.serializer(),
     name = "grep",
-    description = "Recursively search files for a regex pattern using ripgrep (rg) or grep. Respects .gitignore and .codeignore files by default when using ripgrep.",
+    description = "A powerful search tool built on ripgrep\\n\\n  Usage:\\n  - ALWAYS use Grep for search tasks. NEVER invoke `grep` or `rg` as a Bash command. The Grep tool has been optimized for correct permissions and access.\\n  - Supports full regex syntax (e.g., \"log.*Error\", \"function\\\\s+\\\\w+\")\\n  - Filter files with glob parameter (e.g., \"*.js\", \"**/*.tsx\")\\n  - Use Task tool for open-ended searches requiring multiple rounds\\n  - Pattern syntax: Uses ripgrep (not grep) - special regex characters need escaping (use `interface\\\\{\\\\}` to find `interface{}` in Go code)\\n',"
 ) {
 
     data class Config(
@@ -23,7 +23,6 @@ class GrepTool(
         val default_max_matches: Int = 100,
         val default_timeout: Long = 60,
         val exclude_patterns: List<String> = defaultExcludePatterns(),
-        val codeignore_file: String = ".vibeignore",
     ) {
         init {
             require(max_output_bytes > 0) { "max_output_bytes must be > 0" }
@@ -35,14 +34,14 @@ class GrepTool(
 
     @Serializable
     data class Args(
-        @property:LLMDescription("Regular expression to search for.")
+        @property:LLMDescription("The regular expression pattern to search for in file contents")
         val pattern: String,
-        @property:LLMDescription("Directory or file path to search within (relative to workspace).")
+        @property:LLMDescription("File or directory to search in (rg PATH). Defaults to current working directory.")
         val path: String = ".",
-        @property:LLMDescription("Override the default maximum number of matches.")
-        val max_matches: Int? = null,
-        @property:LLMDescription("Whether to respect .gitignore and .ignore files.")
-        val use_default_ignore: Boolean = true,
+        @property:LLMDescription("Glob pattern to filter files (e.g. \"*.js\", \"*.{ts,tsx}\") - maps to rg --glob")
+        val glob: String? = null,
+        @property:LLMDescription("Limit output to first N lines/entries. Optional - shows all matches if not specified.")
+        val limit: Int? = null
     )
 
     @Serializable
@@ -52,13 +51,11 @@ class GrepTool(
         val was_truncated: Boolean,
     )
 
-    private enum class Backend { RIPGREP, GNU_GREP }
-
     override suspend fun execute(args: Args): Result {
         val pattern = args.pattern
         if (pattern.isBlank()) throw ToolExecutionException("pattern must not be blank")
 
-        val maxMatches = (args.max_matches ?: config.default_max_matches).coerceAtLeast(1)
+        val maxMatches = (args.limit ?: config.default_max_matches).coerceAtLeast(1)
 
         // Security: do not allow searching outside workDir.
         val resolvedTarget = resolvePathInsideWorkspace(args.path)
@@ -66,15 +63,10 @@ class GrepTool(
             throw ToolExecutionException("Path does not exist: ${args.path}")
         }
 
-        val excludePatterns = buildExcludePatterns()
+        val excludePatterns = config.exclude_patterns
 
-        val backend = detectBackend()
-            ?: throw ToolExecutionException("No grep backend found. Install ripgrep (rg) or GNU grep (grep).")
-
-        val cmd = when (backend) {
-            Backend.RIPGREP -> buildRipgrepCommand(args, excludePatterns, maxMatches)
-            Backend.GNU_GREP -> buildGnuGrepCommand(args, excludePatterns, maxMatches)
-        }
+        val glob = args.glob?.trim()?.takeIf { it.isNotEmpty() }
+        val cmd = buildRipgrepCommand(args, excludePatterns, maxMatches, glob)
 
         val output = JvmProcessRunner.run(
             command = cmd,
@@ -94,26 +86,12 @@ class GrepTool(
         return parseOutput(output.stdout, maxMatches)
     }
 
-    private fun detectBackend(): Backend? {
-        // Prefer ripgrep if present.
-        if (ExecutableFinder.exists("rg")) return Backend.RIPGREP
-        if (ExecutableFinder.exists("grep")) return Backend.GNU_GREP
-        return null
-    }
-
-    private fun buildExcludePatterns(): List<String> {
-        val patterns = config.exclude_patterns.toMutableList()
-        val ignoreFile = File(config.workDir, config.codeignore_file)
-        if (ignoreFile.isFile) {
-            ignoreFile.readLines(Charsets.UTF_8)
-                .map { it.trim() }
-                .filter { it.isNotBlank() && !it.startsWith("#") }
-                .forEach { patterns += it }
-        }
-        return patterns
-    }
-
-    private fun buildRipgrepCommand(args: Args, excludePatterns: List<String>, maxMatches: Int): List<String> {
+    private fun buildRipgrepCommand(
+        args: Args,
+        excludePatterns: List<String>,
+        maxMatches: Int,
+        glob: String?,
+    ): List<String> {
         val cmd = mutableListOf(
             "rg",
             "--line-number",
@@ -124,40 +102,12 @@ class GrepTool(
             (maxMatches + 1).toString(), // request +1 to detect truncation
         )
 
-        if (!args.use_default_ignore) {
-            cmd += "--no-ignore"
-        }
-
         for (pattern in excludePatterns) {
             cmd += listOf("--glob", "!$pattern")
         }
 
-        cmd += listOf("-e", args.pattern, args.path)
-        return cmd
-    }
-
-    private fun buildGnuGrepCommand(args: Args, excludePatterns: List<String>, maxMatches: Int): List<String> {
-        val cmd = mutableListOf(
-            "grep",
-            "-r",
-            "-n",
-            "-I",
-            "-E",
-            "--max-count=${maxMatches + 1}", // request +1 to detect truncation
-        )
-
-        // Smart-case-ish: if the pattern is all lowercase, do case-insensitive search.
-        if (args.pattern == args.pattern.lowercase()) {
-            cmd += "-i"
-        }
-
-        for (pattern in excludePatterns) {
-            if (pattern.endsWith("/")) {
-                val dirPattern = pattern.removeSuffix("/")
-                cmd += "--exclude-dir=$dirPattern"
-            } else {
-                cmd += "--exclude=$pattern"
-            }
+        if (glob != null) {
+            cmd += listOf("--glob", glob)
         }
 
         cmd += listOf("-e", args.pattern, args.path)
