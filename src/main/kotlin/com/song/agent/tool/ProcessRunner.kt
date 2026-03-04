@@ -99,11 +99,7 @@ internal object JvmProcessRunner {
         maxOutputBytes: Int,
         decodeMode: DecodeMode = DecodeMode.REPLACE,
     ): Output {
-        val shellCommand = if (isWindows()) {
-            listOf("cmd", "/c", command)
-        } else {
-            listOf("bash", "-lc", command)
-        }
+        val shellCommand = listOf("bash", "-lc", command)
         return run(
             command = shellCommand,
             workDir = workDir,
@@ -113,9 +109,6 @@ internal object JvmProcessRunner {
             decodeMode = decodeMode,
         )
     }
-
-    private fun isWindows(): Boolean =
-        System.getProperty("os.name").lowercase().contains("win")
 
     private fun destroyProcessTree(process: Process) {
         // Best-effort: Java 9+ process tree handling.

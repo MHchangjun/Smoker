@@ -13,8 +13,8 @@ fun agentModule(root: Path): Module = module {
     single { root }
 
     single {
-        BashTool(
-            BashTool.Config(
+        ShellTool(
+            ShellTool.Config(
                 workDir = root.toFile(),
             )
         )
@@ -23,6 +23,13 @@ fun agentModule(root: Path): Module = module {
     single {
         GrepTool(
             GrepTool.Config(
+                workDir = root.toFile()
+            )
+        )
+    }
+    single {
+        GlobTool(
+            GlobTool.Config(
                 workDir = root.toFile()
             )
         )
@@ -42,10 +49,15 @@ fun agentModule(root: Path): Module = module {
             )
         )
     }
-    single { SearchReplaceTool(get()) }
-    single { TodoTool() }
+    single {
+        EditTool(
+            EditTool.Config(
+                workDir = root.toFile()
+            )
+        )
+    }
     single { CodeSmellAgent(get(), get(), get(), get(), get(), get()) }
-    single { TestAgent(get(), get(), get(), get(), get()) }
+    single { TestAgent(get(), get(), get(), get(), get(), get()) }
 }
 
 fun startAgentKoin(root: Path): KoinApplication {

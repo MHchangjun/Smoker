@@ -11,12 +11,8 @@ import ai.koog.prompt.executor.clients.openai.OpenAILLMClient
 import ai.koog.prompt.executor.llms.SingleLLMPromptExecutor
 import ai.koog.prompt.params.LLMParams
 import com.song.agent.prompt.SYSTEM_PROMPT
-import com.song.agent.tool.BashTool
-import com.song.agent.tool.GrepTool
-import com.song.agent.tool.ReadFileTool
-import com.song.agent.tool.SearchReplaceTool
-import com.song.agent.tool.TodoTool
-import com.song.agent.tool.WriteFileTool
+import com.song.agent.subagent.getSubAgentDefinitions
+import com.song.agent.tool.*
 import com.song.detekt.DetektConfigContext
 import com.song.sarif.Finding
 import java.nio.file.Files
@@ -24,10 +20,10 @@ import java.nio.file.Path
 import java.nio.file.Paths
 
 class CodeSmellAgent(
-    private val baseTool: BashTool,
-    private val searchReplaceTool: SearchReplaceTool,
-    private val todoTool: TodoTool,
+    private val baseTool: ShellTool,
+    private val editTool: EditTool,
     private val grepTool: GrepTool,
+    private val globTool: GlobTool,
     private val readFileTool: ReadFileTool,
     private val writeFileTool: WriteFileTool,
 ) {
@@ -57,7 +53,7 @@ class CodeSmellAgent(
                 ) {
                     system(SYSTEM_PROMPT)
                 },
-                model = Model.DEVSTRAL_LLAMA_CPP,
+                model = Model.QWEN_3_5_LLAMA,
                 maxAgentIterations = 1000
             ),
             strategy = singleRunStrategy(),
@@ -81,10 +77,11 @@ class CodeSmellAgent(
                 }
             },
             toolRegistry = ToolRegistry {
-                tool(searchReplaceTool)
+                tool(TaskTool(getSubAgentDefinitions(grepTool, globTool, readFileTool)))
+                tool(editTool)
                 tool(baseTool)
-                tool(todoTool)
                 tool(grepTool)
+                tool(globTool)
                 tool(readFileTool)
                 tool(writeFileTool)
             }
