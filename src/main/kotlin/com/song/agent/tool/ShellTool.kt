@@ -12,7 +12,7 @@ class ShellTool(
 ) : Tool<ShellTool.Args, ShellTool.Result>(
     argsSerializer = Args.serializer(),
     resultSerializer = Result.serializer(),
-    name = "run_shell_command",
+    name = ToolNames.SHELL,
     description = """
 Executes a given shell command (as `bash -c <command>`) in a persistent shell session with timeout, ensuring proper handling and security measures.
 

@@ -17,7 +17,7 @@ class TaskTool(
 ) : Tool<TaskTool.Args, TaskTool.Result>(
     argsSerializer = Args.serializer(),
     resultSerializer = Result.serializer(),
-    name = "task",
+    name = ToolNames.TASK,
     description = buildDescription(subagents).also { println(it) }
 ) {
     private val subagentByName: Map<String, TaskSubagentDefinition> = subagents.associateBy { it.name }

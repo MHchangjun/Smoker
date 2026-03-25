@@ -11,7 +11,7 @@ class EditTool(
 ) : Tool<EditTool.Args, EditTool.Result>(
     argsSerializer = Args.serializer(),
     resultSerializer = Result.serializer(),
-    name = "edit",
+    name = ToolNames.EDIT,
     description = """
 Replaces text within a file. By default, replaces a single occurrence. Set \`replace_all\` to true when you intend to modify every instance of \`old_string\`. This tool requires providing significant context around the change to ensure precise targeting. Always use the read_file tool to examine the file's current content before attempting a text replacement.
 

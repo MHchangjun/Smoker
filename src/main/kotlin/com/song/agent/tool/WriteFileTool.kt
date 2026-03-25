@@ -10,7 +10,7 @@ class WriteFileTool(
 ) : Tool<WriteFileTool.Args, WriteFileTool.Result>(
     argsSerializer = Args.serializer(),
     resultSerializer = Result.serializer(),
-    name = "write_file",
+    name = ToolNames.WRITE_FILE,
     description = "Create or overwrite a UTF-8 file. Fails if file exists unless 'overwrite=True'."
 ) {
 
