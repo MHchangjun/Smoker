@@ -18,10 +18,10 @@ class ProjectContextProvider(
     private val moduleTypeCache = mutableMapOf<String, String?>()
 
     fun getFullContext(): String {
-        val structure = getDirectoryStructure()
+//        val structure = getDirectoryStructure()
         return UtilityPrompt.PROJECT_CONTEXT.read().formatTemplate(
-            "structure" to structure,
-            "abs_path" to rootPath.toString(),
+//            "structure" to structure,
+//            "abs_path" to rootPath.toString(),
         )
     }
 

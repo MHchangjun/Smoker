@@ -32,7 +32,7 @@ object Model {
 
     val QWEN_3_5 = LLModel(
         provider = LLMProvider.Ollama,
-        id = "qwen3.5:27b",
+        id = "qwen3.5:35b",
         capabilities = listOf(
             LLMCapability.Temperature,
             LLMCapability.Schema.JSON.Basic,

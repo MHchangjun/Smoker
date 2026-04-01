@@ -9,11 +9,11 @@ object SystemPrompt {
         return buildString {
             append(base)
 
-            val projectContext = ProjectContextProvider(ProjectContextConfig()).getFullContext()
-            if (projectContext.isNotBlank()) {
-                append("\n\n")
-                append(projectContext)
-            }
+//            val projectContext = ProjectContextProvider(ProjectContextConfig()).getFullContext()
+//            if (projectContext.isNotBlank()) {
+//                append("\n\n")
+//                append(projectContext)
+//            }
         }
     }
 }

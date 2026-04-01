@@ -6,7 +6,7 @@ import java.util.concurrent.TimeUnit
 // -------------------- detekt runner --------------------
 data class CmdResult(val exitCode: Int, val output: String)
 
-fun runGradleDetekt(projectRoot: File, gradleTask: String, timeoutMinutes: Long = 20): CmdResult {
+fun runGradleTask(projectRoot: File, gradleTask: String, timeoutMinutes: Long = 20): CmdResult {
     val os = System.getProperty("os.name").lowercase()
     val isWindows = os.contains("win")
 
@@ -34,7 +34,7 @@ fun runGradleDetekt(projectRoot: File, gradleTask: String, timeoutMinutes: Long 
     if (!finished) {
         p.destroyForcibly()
         t.join(1000)
-        return CmdResult(-1, out.toString() + "\n[TIMEOUT] detekt did not finish in ${timeoutMinutes}m")
+        return CmdResult(-1, out.toString() + "\n[TIMEOUT] Gradle task '$gradleTask' did not finish in ${timeoutMinutes}m")
     }
 
     t.join(5000)
