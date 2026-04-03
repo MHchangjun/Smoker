@@ -34,12 +34,14 @@ fun agentModule(root: Path): Module = module {
 
     single { JetBrainsInspectRunner() }
     single { JetBrainsInspectionReportParser() }
+    single { InspectionFilter() }
+    single { InspectionPrioritizer() }
     single { InspectionPromptBuilder() }
     single { InspectionCommitService(get()) }
     single { InspectionBranchService(get()) }
-    single { InspectionScanService(get(), get()) }
+    single { InspectionScanService(get(), get(), get()) }
     single { InspectionFixService(get(), get(), get(), get()) }
-    single { InspectionWorkflowRunner(get(), get(), get(), get(), get()) }
+    single { InspectionWorkflowRunner(get(), get(), get(), get(), get(), get()) }
 }
 
 fun startAgentKoin(root: Path): KoinApplication {
