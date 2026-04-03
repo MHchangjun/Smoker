@@ -4,7 +4,7 @@ import com.song.detekt.loadDetektConfig
 import com.song.di.startAgentKoin
 import com.song.inspection.InspectionFixCommand
 import com.song.inspection.InspectionWorkflowRunner
-import com.song.workflow.LintWorkflowRunner
+import com.song.workflow.DetektWorkflowRunner
 import java.io.File
 
 fun main(args: Array<String>) {
@@ -16,7 +16,7 @@ fun main(args: Array<String>) {
     when (args.firstOrNull() ?: "lint") {
         "lint" -> {
             val detektConfig = loadDetektConfig(projectRoot.toPath())
-            val runner = koinApp.koin.get<LintWorkflowRunner>()
+            val runner = koinApp.koin.get<DetektWorkflowRunner>()
             runner.run(projectRoot, detektConfig)
         }
 
