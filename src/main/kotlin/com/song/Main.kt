@@ -1,10 +1,10 @@
 package com.song
 
+import com.song.detekt.DetektWorkflowRunner
 import com.song.detekt.loadDetektConfig
 import com.song.di.startAgentKoin
 import com.song.inspection.InspectionFixCommand
 import com.song.inspection.InspectionWorkflowRunner
-import com.song.workflow.DetektWorkflowRunner
 import java.io.File
 
 fun main(args: Array<String>) {

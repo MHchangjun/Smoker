@@ -5,3 +5,6 @@ plugins {
 }
 
 include("agent-tool")
+include("core")
+include("detekt-workflow")
+include("inspection-workflow")
