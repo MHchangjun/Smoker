@@ -20,17 +20,17 @@ fun agentModule(root: Path): Module = module {
     single { InspectionAgent(root.toAbsolutePath().normalize().toString(), get(), get(), get(), get(), get(), get()) }
 
     single { GitCli() }
-    single { LintRunContextFactory() }
-    single { LintScanService() }
-    single { LintSummaryPrinter() }
-    single { LintPromptBuilder() }
-    single { LintCommitService(get()) }
+    single { DetektRunContextFactory() }
+    single { DetektScanService() }
+    single { DetektSummaryPrinter() }
+    single { DetektPromptBuilder() }
+    single { DetektCommitService(get()) }
     single { RepositorySyncService(get()) }
-    single { LintBranchService(get()) }
-    single { LintFixService(get(), get(), get(), get()) }
+    single { DetektBranchService(get()) }
+    single { DetektFixService(get(), get(), get(), get()) }
     single { BuildValidationService(get()) }
     single { PullRequestPublishService(get()) }
-    single { LintWorkflowRunner(get(), get(), get(), get(), get(), get(), get(), get()) }
+    single { DetektWorkflowRunner(get(), get(), get(), get(), get(), get(), get(), get()) }
 
     single { JetBrainsInspectRunner() }
     single { JetBrainsInspectionReportParser() }
