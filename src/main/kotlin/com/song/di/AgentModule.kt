@@ -1,8 +1,10 @@
 package com.song.di
 
 import com.song.agent.CodeSmellAgent
+import com.song.agent.InspectionAgent
 import com.song.agent.TestAgent
 import com.song.agent.tool.*
+import com.song.inspection.*
 import com.song.workflow.*
 import org.koin.core.KoinApplication
 import org.koin.core.context.startKoin
@@ -58,6 +60,7 @@ fun agentModule(root: Path): Module = module {
         )
     }
     single { CodeSmellAgent(root.toAbsolutePath().normalize().toString(), get(), get(), get(), get(), get(), get()) }
+    single { InspectionAgent(root.toAbsolutePath().normalize().toString(), get(), get(), get(), get(), get(), get()) }
     single { TestAgent(root.toAbsolutePath().normalize().toString(), get(), get(), get(), get(), get()) }
 
     single { GitCli() }
@@ -72,6 +75,15 @@ fun agentModule(root: Path): Module = module {
     single { BuildValidationService(get()) }
     single { PullRequestPublishService(get()) }
     single { LintWorkflowRunner(get(), get(), get(), get(), get(), get(), get(), get()) }
+
+    single { JetBrainsInspectRunner() }
+    single { JetBrainsInspectionReportParser() }
+    single { InspectionPromptBuilder() }
+    single { InspectionCommitService(get()) }
+    single { InspectionBranchService(get()) }
+    single { InspectionScanService(get(), get()) }
+    single { InspectionFixService(get(), get(), get(), get()) }
+    single { InspectionWorkflowRunner(get(), get(), get(), get(), get()) }
 }
 
 fun startAgentKoin(root: Path): KoinApplication {

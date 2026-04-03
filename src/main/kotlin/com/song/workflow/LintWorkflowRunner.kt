@@ -46,6 +46,6 @@ internal class LintWorkflowRunner(
             return
         }
 
-//        publishService.pushAndCreatePr(context.projectRoot, baseBranch = "develop")
+        publishService.pushAndCreatePr(context.projectRoot, baseBranch = "develop")
     }
 }
