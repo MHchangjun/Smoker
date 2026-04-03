@@ -16,7 +16,7 @@ internal data class CommitOutcome(
     }
 }
 
-internal class LintCommitService(
+internal class DetektCommitService(
     private val gitCli: GitCli
 ) {
     fun commitAgentChanges(

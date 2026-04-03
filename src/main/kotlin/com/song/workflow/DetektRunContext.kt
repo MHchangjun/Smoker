@@ -2,17 +2,17 @@ package com.song.workflow
 
 import java.io.File
 
-internal data class LintRunContext(
+internal data class DetektRunContext(
     val projectRoot: File,
     val module: String,
     val task: String
 )
 
-internal class LintRunContextFactory {
-    fun create(projectRoot: File): LintRunContext {
+internal class DetektRunContextFactory {
+    fun create(projectRoot: File): DetektRunContext {
         val module = "app"
         val task = ":$module:detekt"
-        return LintRunContext(
+        return DetektRunContext(
             projectRoot = projectRoot,
             module = module,
             task = task

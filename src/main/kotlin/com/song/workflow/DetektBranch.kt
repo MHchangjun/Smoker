@@ -3,7 +3,7 @@ package com.song.workflow
 import java.io.File
 import java.time.LocalDate
 
-internal class LintBranchService(
+internal class DetektBranchService(
     private val gitCli: GitCli
 ) {
     fun checkoutOrCreateForToday(projectRoot: File): Boolean {

@@ -3,7 +3,7 @@ package com.song.workflow
 import com.song.detekt.DetektConfigContext
 import com.song.sarif.Finding
 
-internal class LintPromptBuilder {
+internal class DetektPromptBuilder {
     fun build(path: String, findings: List<Finding>, detektConfig: DetektConfigContext?): String {
         val findingsByRule = findings
             .groupBy { it.ruleId.takeIf { id -> id.isNotBlank() } ?: "unknown" }

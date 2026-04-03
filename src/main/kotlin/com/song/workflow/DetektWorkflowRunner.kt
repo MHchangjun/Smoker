@@ -3,13 +3,13 @@ package com.song.workflow
 import com.song.detekt.DetektConfigContext
 import java.io.File
 
-internal class LintWorkflowRunner(
-    private val contextFactory: LintRunContextFactory,
+internal class DetektWorkflowRunner(
+    private val contextFactory: DetektRunContextFactory,
     private val repositorySyncService: RepositorySyncService,
-    private val scanService: LintScanService,
-    private val summaryPrinter: LintSummaryPrinter,
-    private val branchService: LintBranchService,
-    private val fixService: LintFixService,
+    private val scanService: DetektScanService,
+    private val summaryPrinter: DetektSummaryPrinter,
+    private val branchService: DetektBranchService,
+    private val fixService: DetektFixService,
     private val buildValidationService: BuildValidationService,
     private val publishService: PullRequestPublishService,
 ) {

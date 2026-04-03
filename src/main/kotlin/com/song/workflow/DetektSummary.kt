@@ -2,8 +2,8 @@ package com.song.workflow
 
 import com.song.sarif.Finding
 
-internal class LintSummaryPrinter {
-    fun print(context: LintRunContext, findings: List<Finding>) {
+internal class DetektSummaryPrinter {
+    fun print(context: DetektRunContext, findings: List<Finding>) {
         println("Module: ${context.module} task=${context.task}")
         if (findings.isEmpty()) {
             println("No findings reported by detekt.")

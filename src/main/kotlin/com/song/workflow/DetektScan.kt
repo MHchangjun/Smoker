@@ -9,18 +9,18 @@ import com.song.sarif.SarifReport
 import java.io.File
 import java.net.URI
 
-internal data class LintScanResult(
+internal data class DetektScanResult(
     val findings: List<Finding>
 )
 
-internal class LintScanService {
+internal class DetektScanService {
     private val skipRules = setOf(
         "detekt.exceptions.TooGenericExceptionCaught",
         "detekt.exceptions.TooGenericExceptionThrown",
         "detekt.exceptions.SwallowedException",
     )
 
-    fun scan(context: LintRunContext): LintScanResult {
+    fun scan(context: DetektRunContext): DetektScanResult {
         println("Running detekt: ${context.task} in ${context.projectRoot.absolutePath}")
         val cmdResult = runGradleTask(context.projectRoot, context.task)
         println("detekt exitCode=${cmdResult.exitCode}")
@@ -32,7 +32,7 @@ internal class LintScanService {
             it.ruleId !in skipRules
         }
         println("Parsed findings: ${findings.size}")
-        return LintScanResult(findings = findings)
+        return DetektScanResult(findings = findings)
     }
 
     private fun findSarif(projectRoot: File, module: String): File {

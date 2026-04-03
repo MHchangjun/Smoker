@@ -8,9 +8,9 @@ import java.io.File
 
 private const val MAX_FINDINGS_TO_FIX = 3
 
-internal class LintFixService(
-    private val promptBuilder: LintPromptBuilder,
-    private val commitService: LintCommitService,
+internal class DetektFixService(
+    private val promptBuilder: DetektPromptBuilder,
+    private val commitService: DetektCommitService,
     private val gitCli: GitCli,
     private val agent: CodeSmellAgent
 ) {
