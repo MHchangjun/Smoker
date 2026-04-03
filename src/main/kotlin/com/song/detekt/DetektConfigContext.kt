@@ -8,45 +8,6 @@ data class DetektConfigContext(
     val path: Path,
     val lines: List<String>
 ) {
-    fun relevantConfigEntries(ruleId: String): List<String> {
-        val entries = mutableListOf<String>()
-        val rulePath = parseRulePath(ruleId)
-        if (rulePath != null) {
-            val sectionIndex = findRuleLineIndex(rulePath.section)
-            if (sectionIndex != null) {
-                val sectionEnd = blockEndIndex(sectionIndex)
-                val ruleIndex = findRuleLineIndex(
-                    rulePath.rule,
-                    start = sectionIndex + 1,
-                    end = sectionEnd + 1
-                )
-                if (ruleIndex != null) {
-                    val ruleEnd = blockEndIndex(ruleIndex)
-                    entries += entriesFromBlock(
-                        startIndex = ruleIndex,
-                        endIndex = ruleEnd,
-                        prefix = listOf(rulePath.section)
-                    )
-                }
-            }
-        }
-
-        if (entries.isEmpty()) {
-            for (candidate in ruleIdCandidates(ruleId)) {
-                val index = findRuleLineIndex(candidate) ?: continue
-                val endIndex = blockEndIndex(index)
-                entries += entriesFromBlock(startIndex = index, endIndex = endIndex, prefix = emptyList())
-                if (entries.isNotEmpty()) break
-            }
-        }
-
-        val configValidation = findScalarAtPath(listOf("config", "validation"))
-        if (configValidation != null) {
-            entries += "config.validation: $configValidation"
-        }
-
-        return entries.distinct()
-    }
 
     fun ruleSnippet(ruleId: String): String? {
         val rulePath = parseRulePath(ruleId)

@@ -2,7 +2,6 @@ package com.song.di
 
 import com.song.agent.CodeSmellAgent
 import com.song.agent.InspectionAgent
-import com.song.agent.TestAgent
 import com.song.agent.tool.di.toolModule
 import com.song.inspection.*
 import com.song.workflow.*
@@ -19,7 +18,6 @@ fun agentModule(root: Path): Module = module {
 
     single { CodeSmellAgent(root.toAbsolutePath().normalize().toString(), get(), get(), get(), get(), get(), get()) }
     single { InspectionAgent(root.toAbsolutePath().normalize().toString(), get(), get(), get(), get(), get(), get()) }
-    single { TestAgent(root.toAbsolutePath().normalize().toString(), get(), get(), get(), get(), get()) }
 
     single { GitCli() }
     single { LintRunContextFactory() }
