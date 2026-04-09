@@ -14,7 +14,6 @@ repositories {
 dependencies {
     implementation(project(":core"))
     implementation(project(":detekt-workflow"))
-    implementation(project(":inspection-workflow"))
 
     testImplementation(kotlin("test"))
 }

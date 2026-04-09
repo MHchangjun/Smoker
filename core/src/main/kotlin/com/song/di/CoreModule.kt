@@ -1,7 +1,6 @@
 package com.song.di
 
 import com.song.agent.CodeSmellAgent
-import com.song.agent.InspectionAgent
 import com.song.agent.tool.di.toolModule
 import com.song.git.GitCli
 import com.song.git.PullRequestPublishService
@@ -16,7 +15,6 @@ fun coreModule(root: Path): Module = module {
     single { root }
 
     single { CodeSmellAgent(root.toAbsolutePath().normalize().toString(), get(), get(), get(), get(), get(), get()) }
-    single { InspectionAgent(root.toAbsolutePath().normalize().toString(), get(), get(), get(), get(), get(), get()) }
 
     single { GitCli() }
     single { RepositorySyncService(get()) }
