@@ -17,4 +17,17 @@ object Model {
         ),
         contextLength = 262_144,
     )
+
+    val GEMMA4 = LLModel(
+        provider = LLMProvider.OpenAI,
+        id = "gemma4",
+        capabilities = listOf(
+            LLMCapability.Temperature,
+            LLMCapability.Schema.JSON.Basic,
+            LLMCapability.Tools,
+            LLMCapability.OpenAIEndpoint.Completions,
+            LLMCapability.Completion
+        ),
+        contextLength = 262_144,
+    )
 }

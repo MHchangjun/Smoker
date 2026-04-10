@@ -16,7 +16,7 @@ import com.song.agent.tool.*
 class CodeSmellAgent(
     private val projectRoot: String,
     private val baseTool: ShellTool,
-    private val editTool: EditTool,
+    private val editTool: DiffFencedEditTool,
     private val grepTool: GrepTool,
     private val globTool: GlobTool,
     private val readFileTool: ReadFileTool,
@@ -43,7 +43,7 @@ class CodeSmellAgent(
                 ) {
                     system(systemPrompt(projectRoot))
                 },
-                model = Model.QWEN_3_5_LLAMA,
+                model = Model.GEMMA4,
                 maxAgentIterations = 1000
             ),
             strategy = singleRunStrategy(),
@@ -58,7 +58,7 @@ class CodeSmellAgent(
                     }
 
                     onToolCallCompleted { ctx ->
-                        log("ToolCallResult", ctx.toolName)
+                        log("ToolCallResult", ctx.toolName, "result = ${ctx.toolResult.toString()}")
                     }
                 }
             },
@@ -81,7 +81,7 @@ class CodeSmellAgent(
 }
 
 private fun systemPrompt(projectPath: String) = """
-You are Qwen Code, an interactive CLI agent developed by Alibaba Group, specializing in Code Smell Fix Task. You fix code smell findings in Android/Kotlin projects by editing the source to resolve the reported issue while preserving existing behavior.
+You are Claude code, an interactive CLI agent, specializing in Code Smell Fix Task. You fix code smell findings in Android/Kotlin projects by editing the source to resolve the reported issue while preserving existing behavior.
 
 # Core Mandates
 
@@ -104,6 +104,7 @@ You are Qwen Code, an interactive CLI agent developed by Alibaba Group, speciali
 1. **Minimal change only** : Fix the reported issue and nothing else. Do NOT refactor surrounding code, even if it looks improvable.
 2. **Behavior preservation is non-negotiable** : If uncertain whether a change alters behavior, keep the original code and add `@Suppress`.
 3. **Write idiomatic Kotlin** : Prefer stdlib functions over manual loops, modern Kotlin APIs over legacy Java utilities.
+4. **Stepdown Rule** : When extracting a private function, place it immediately below the calling function.
 
 ### Project-Specific Fix Policies
 The rules below have multiple valid fix strategies.

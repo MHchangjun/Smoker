@@ -1,5 +1,6 @@
 package com.song.agent.tool.di
 
+import aws.smithy.kotlin.runtime.retries.delay.InfiniteTokenBucket.config
 import com.song.agent.tool.*
 import org.koin.core.module.Module
 import org.koin.dsl.module
@@ -12,4 +13,5 @@ fun toolModule(root: Path): Module = module {
     single { ReadFileTool(ReadFileTool.Config(workDir = root.toFile())) }
     single { WriteFileTool(WriteFileTool.Config(workDir = root.toFile())) }
     single { EditTool(EditTool.Config(workDir = root.toFile())) }
+    single { DiffFencedEditTool(DiffFencedEditTool.Config(workDir = root.toFile())) }
 }

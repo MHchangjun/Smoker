@@ -8,4 +8,5 @@ object ToolNames {
     const val GLOB = "glob"
     const val GREP = "grep"
     const val TASK = "task"
+    const val DIFF_FENCED_EDIT = "edit"
 }
