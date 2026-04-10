@@ -7,7 +7,7 @@ import com.song.sarif.Finding
 import kotlinx.coroutines.runBlocking
 import java.io.File
 
-private const val MAX_FINDINGS_TO_FIX = 3
+private const val MAX_FINDINGS_TO_FIX = 30
 
 class DetektFixService(
     private val promptBuilder: DetektPromptBuilder,
@@ -37,14 +37,24 @@ class DetektFixService(
             return emptyList()
         }
 
-        val findingsByFile = fixableFindings
+        val firstRuleGroupPerFile = fixableFindings
             .groupBy { it.absolutePath!! }
+            .mapNotNull { (path, fileFindings) ->
+                val firstRuleGroup = fileFindings
+                    .groupBy { it.ruleId.takeIf(String::isNotBlank) ?: "unknown" }
+                    .entries
+                    .firstOrNull()
+                    ?: return@mapNotNull null
+
+                Triple(path, firstRuleGroup.key, firstRuleGroup.value)
+            }
 
         val outcomes = mutableListOf<CommitOutcome>()
         runBlocking {
-            findingsByFile.entries.take(MAX_FINDINGS_TO_FIX).forEach { (path, fileFindings) ->
+            firstRuleGroupPerFile.take(MAX_FINDINGS_TO_FIX).forEach { (path, ruleId, ruleFindings) ->
                 val before = gitCli.captureDirtyFingerprints(projectRoot)
-                val prompt = promptBuilder.build(path, fileFindings, detektConfig)
+                println("Processing first detekt rule group for file=$path, ruleId=$ruleId, count=${ruleFindings.size}")
+                val prompt = promptBuilder.build(path, ruleFindings, detektConfig)
                 val rawMessage = agent.start(prompt)
                 val outcome = commitService.commitAgentChanges(projectRoot, before, rawMessage)
                 if (outcome.committed) {
