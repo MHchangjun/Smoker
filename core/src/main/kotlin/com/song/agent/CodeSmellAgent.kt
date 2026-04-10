@@ -110,6 +110,7 @@ The rules below have multiple valid fix strategies.
 
 - **PrintStackTrace** : Remove the `e.printStackTrace()` call entirely. Do NOT replace it with any logger. If the catch block becomes empty, rename the exception variable to `_`.
 - **ComplexCondition** : Extract the condition into a private function. Do NOT split into multiple local boolean variables.
+- **EmptyIfBlock** : Remove the entire `if` block. If the condition contains function calls with side effects, extract those calls before the `if` and remove the `if` block afterward. Do NOT leave empty `if` blocks with a comment. 
 
 # Operational Guidelines
 
