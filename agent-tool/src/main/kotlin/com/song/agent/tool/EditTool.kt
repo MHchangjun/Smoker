@@ -54,17 +54,7 @@ Expectation for required parameters:
 
     @Serializable
     data class Result(
-        @SerialName("file_path")
-        val filePath: String,
-        @SerialName("occurrences_found")
-        val occurrencesFound: Int,
-        @SerialName("replaced_count")
-        val replacedCount: Int,
-        @SerialName("is_new_file")
-        val isNewFile: Boolean,
-        val message: String,
-        @SerialName("snippet")
-        val snippet: String? = null,
+        val llm_content: String,
     )
 
     override suspend fun execute(args: Args): Result {
@@ -107,20 +97,19 @@ Expectation for required parameters:
         }
 
         val snippet = extractSnippet(currentContent, editPlan.newContent)
-        val message = if (editPlan.isNewFile) {
-            "Created new file: ${args.filePath}."
-        } else {
-            "Updated ${args.filePath}. Replaced ${editPlan.replacedCount} occurrence(s)."
+        val llmContent = buildString {
+            if (editPlan.isNewFile) {
+                append("Created new file: ${args.filePath} with provided content.")
+            } else {
+                append("The file: ${args.filePath} has been updated. Replaced ${editPlan.replacedCount} occurrence(s).")
+            }
+            if (snippet != null) {
+                append("\n\n---\n\n")
+                append(snippet)
+            }
         }
 
-        return Result(
-            filePath = args.filePath,
-            occurrencesFound = editPlan.occurrences,
-            replacedCount = editPlan.replacedCount,
-            isNewFile = editPlan.isNewFile,
-            message = message,
-            snippet = snippet
-        )
+        return Result(llm_content = llmContent)
     }
 
     private data class EditPlan(
