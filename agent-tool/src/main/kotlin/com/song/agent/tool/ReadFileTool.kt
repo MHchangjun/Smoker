@@ -4,7 +4,6 @@ import ai.koog.agents.core.tools.Tool
 import ai.koog.agents.core.tools.annotations.LLMDescription
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.JsonNames
 import java.io.File
 
 class ReadFileTool(
@@ -30,7 +29,6 @@ class ReadFileTool(
     @Serializable
     data class Args(
         @property:LLMDescription("The absolute path to the file to read (e.g., '/home/user/project/file.txt'). Relative paths are not supported. You must provide an absolute path.")
-        @JsonNames("path")
         val absolute_path: String,
         @property:LLMDescription("Optional: For text files, the 0-based line number to start reading from. Requires 'limit' to be set. Use for paginating through large files.")
         val offset: Int? = null,
