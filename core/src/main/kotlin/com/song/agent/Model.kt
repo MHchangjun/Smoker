@@ -5,15 +5,17 @@ import ai.koog.prompt.llm.LLMProvider
 import ai.koog.prompt.llm.LLModel
 
 object Model {
-    val QWEN_3_5_LLAMA = LLModel(
+    val QWEN_3_6_LLAMA = LLModel(
         provider = LLMProvider.OpenAI,
-        id = "qwen3.5",
+        id = "qwen3.6",
         capabilities = listOf(
             LLMCapability.Temperature,
             LLMCapability.Schema.JSON.Basic,
             LLMCapability.Tools,
             LLMCapability.OpenAIEndpoint.Completions,
-            LLMCapability.Completion
+            LLMCapability.Thinking,
+            LLMCapability.Completion,
+            LLMCapability.PromptCaching
         ),
         contextLength = 262_144,
     )
