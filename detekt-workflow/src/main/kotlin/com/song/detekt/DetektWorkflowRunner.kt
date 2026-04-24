@@ -35,7 +35,7 @@ class DetektWorkflowRunner(
             return
         }
 
-        val outcomes = fixService.fixAll(detektConfig, scan.findings, context.projectRoot)
+        val outcomes = fixService.fixAll(detektConfig, context, context.projectRoot)
         if (outcomes.isEmpty()) {
             println("No commits created. Skip push/PR.")
             return
