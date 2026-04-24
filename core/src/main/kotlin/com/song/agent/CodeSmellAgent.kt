@@ -8,19 +8,18 @@ import ai.koog.agents.features.eventHandler.feature.EventHandler
 import ai.koog.prompt.dsl.prompt
 import ai.koog.prompt.executor.clients.openai.OpenAIClientSettings
 import ai.koog.prompt.executor.clients.openai.OpenAILLMClient
-import ai.koog.prompt.executor.llms.SingleLLMPromptExecutor
+import ai.koog.prompt.executor.llms.MultiLLMPromptExecutor
 import ai.koog.prompt.params.LLMParams
-import com.song.agent.subagent.getSubAgentDefinitions
 import com.song.agent.tool.*
+import kotlin.time.ExperimentalTime
 
+@OptIn(ExperimentalTime::class)
 class CodeSmellAgent(
     private val projectRoot: String,
-    private val baseTool: ShellTool,
-    private val editTool: DiffFencedEditTool,
-    private val grepTool: GrepTool,
-    private val globTool: GlobTool,
+    private val shellTool: ShellTool,
+    private val editTool: EditTool,
     private val readFileTool: ReadFileTool,
-    private val writeFileTool: WriteFileTool,
+    private val writeFileTool: WriteFileTool
 ) {
     suspend fun start(userPrompt: String): String {
         val agentService = buildAgentService()
@@ -28,7 +27,7 @@ class CodeSmellAgent(
     }
 
     private fun buildAgentService(): AIAgentService<String, String, *> {
-        val executor = SingleLLMPromptExecutor(
+        val executor = MultiLLMPromptExecutor(
             OpenAILLMClient(
                 "",
                 OpenAIClientSettings("http://100.99.171.25:8080")
@@ -39,11 +38,11 @@ class CodeSmellAgent(
             agentConfig = AIAgentConfig(
                 prompt = prompt(
                     "smoker",
-                    LLMParams(temperature = 0.7)
+                    LLMParams(temperature = 0.6)
                 ) {
                     system(systemPrompt(projectRoot))
                 },
-                model = Model.GEMMA4,
+                model = Model.QWEN_3_6_LLAMA,
                 maxAgentIterations = 1000
             ),
             strategy = singleRunStrategy(),
@@ -58,16 +57,27 @@ class CodeSmellAgent(
                     }
 
                     onToolCallCompleted { ctx ->
-                        log("ToolCallResult", ctx.toolName, "result = ${ctx.toolResult.toString()}")
+                        log("ToolCallResult", ctx.toolName, "complete")
+                    }
+
+                    onLLMCallCompleted { ctx ->
+                        ctx.responses.forEach { response ->
+                            when (response) {
+                                is ai.koog.prompt.message.Message.Reasoning -> log("Reasoning", response.content)
+                                is ai.koog.prompt.message.Message.Assistant -> log("Assistant", response.content)
+                                else -> {}
+                            }
+                        }
+                    }
+
+                    onToolCallFailed { ctx ->
+                        log("onToolCallFailed", ctx.toolName, "result = ${ctx.error?.message}")
                     }
                 }
             },
             toolRegistry = ToolRegistry {
-                tool(TaskTool(getSubAgentDefinitions(grepTool, globTool, readFileTool)))
                 tool(editTool)
-                tool(baseTool)
-                tool(grepTool)
-                tool(globTool)
+                tool(shellTool)
                 tool(readFileTool)
                 tool(writeFileTool)
             }
@@ -81,7 +91,7 @@ class CodeSmellAgent(
 }
 
 private fun systemPrompt(projectPath: String) = """
-You are Claude code, an interactive CLI agent, specializing in Code Smell Fix Task. You fix code smell findings in Android/Kotlin projects by editing the source to resolve the reported issue while preserving existing behavior.
+You are a refactoring agent running in a CLI environment. 
 
 # Core Mandates
 
@@ -123,14 +133,13 @@ The rules below have multiple valid fix strategies.
 - **Formatting:** Use GitHub-flavored Markdown. Responses will be rendered in monospace.
 - **Tools vs. Text:** Use tools for actions, text output *only* for communication. Do not add explanatory comments within tool calls or code blocks unless specifically part of the required code/command itself.
 - **Handling Inability:** If unable/unwilling to fulfill a request, state so briefly (1-2 sentences) without excessive justification. Offer alternatives if appropriate.
-- **Final Output:** After all fixes are applied, output ONLY a single-line git commit message. Format: `fix(<rule>): <what changed>`. If multiple rules were fixed, use `fix: <summary>`. No other text.
+- **Final Output:** After all fixes are applied, output ONLY a single-line git commit message. Format: `fix: <what changed>`.
 
 ## Tool Usage
 - **File Paths:** Always use absolute paths when referring to files with tools like '${ToolNames.READ_FILE}' or '${ToolNames.WRITE_FILE}'. Relative paths are not supported. You must provide an absolute path.
 - **Parallelism:** Execute multiple independent tool calls in parallel when feasible (i.e. searching the codebase).
 - **Command Execution:** Use the '${ToolNames.SHELL}' tool for running shell commands, remembering the safety rule to explain modifying commands first.
 - **Interactive Commands:** Try to avoid shell commands that are likely to require user interaction (e.g. \`git rebase -i\`). Use non-interactive versions of commands (e.g. \`npm init -y\` instead of \`npm init\`) when available, and otherwise remind the user that interactive shell commands are not supported and may cause hangs until canceled by the user.
-- **Subagent Delegation:** When doing file search, prefer to use the '${ToolNames.TASK}' tool in order to reduce context usage. You should proactively use the '${ToolNames.TASK}' tool with specialized agents when the task at hand matches the agent's description.
 
 Absolute path: $projectPath
 """.trimIndent()
