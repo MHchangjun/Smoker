@@ -4,13 +4,14 @@ import ai.koog.agents.core.tools.Tool
 import ai.koog.agents.core.tools.annotations.LLMDescription
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.serializer
 import java.io.File
 
 class EditTool(
     private val config: Config = Config()
-) : Tool<EditTool.Args, EditTool.Result>(
+) : Tool<EditTool.Args, String>(
     argsSerializer = Args.serializer(),
-    resultSerializer = Result.serializer(),
+    resultSerializer = String.serializer(),
     name = ToolNames.EDIT,
     description = """
 Replaces text within a file. By default, replaces a single occurrence. Set \`replace_all\` to true when you intend to modify every instance of \`old_string\`. This tool requires providing significant context around the change to ensure precise targeting. Always use the read_file tool to examine the file's current content before attempting a text replacement.
@@ -46,25 +47,23 @@ Expectation for required parameters:
         val oldString: String,
         @SerialName("new_string")
         @property:LLMDescription("The exact literal text to replace `old_string` with, preferably unescaped. Provide the EXACT text. Ensure the resulting code is correct and idiomatic.")
-        val newString: String,
-        @SerialName("replace_all")
-        @property:LLMDescription("Replace all occurrences of old_string (default false).")
-        val replaceAll: Boolean = false,
+        val newString: String
     )
 
-    @Serializable
-    data class Result(
-        val llm_content: String,
-    )
-
-    override suspend fun execute(args: Args): Result {
-        validateInputs(args)
+    override suspend fun execute(args: Args): String {
+        if (args.filePath.isBlank()) return "file_path must not be empty"
 
         val target = resolvePathInsideWorkspace(args.filePath)
+            ?: return "File path must be absolute: ${args.filePath}"
+
+        if (!target.path.startsWith(config.workDir.canonicalFile.path + File.separator) && target != config.workDir.canonicalFile) {
+            return "Security error: Cannot access outside workspace: ${args.filePath}"
+        }
+
         val fileExists = target.exists()
 
         if (fileExists && !target.isFile) {
-            throw ToolExecutionException("Not a file: ${args.filePath}")
+            return "Not a file: ${args.filePath}"
         }
 
         val currentContent = if (fileExists) {
@@ -81,19 +80,22 @@ Expectation for required parameters:
             currentContent = currentContent,
             fileExists = fileExists,
             oldString = normalizedOld,
-            newString = normalizedNew,
-            replaceAll = args.replaceAll,
+            newString = normalizedNew
         )
+
+        if (editPlan.error != null) {
+            return editPlan.error
+        }
 
         val parent = target.parentFile
         if (parent != null && config.createParentDirs && !parent.exists() && !parent.mkdirs()) {
-            throw ToolExecutionException("Failed to create parent directory: ${parent.path}")
+            return "Failed to create parent directory: ${parent.path}"
         }
 
         try {
             target.writeText(editPlan.newContent, Charsets.UTF_8)
         } catch (e: Exception) {
-            throw ToolExecutionException("Error writing ${args.filePath}: ${e.message}", e)
+            return "Error writing ${args.filePath}: ${e.message}"
         }
 
         val snippet = extractSnippet(currentContent, editPlan.newContent)
@@ -109,14 +111,15 @@ Expectation for required parameters:
             }
         }
 
-        return Result(llm_content = llmContent)
+        return llmContent
     }
 
     private data class EditPlan(
-        val newContent: String,
-        val occurrences: Int,
-        val replacedCount: Int,
-        val isNewFile: Boolean,
+        val newContent: String = "",
+        val occurrences: Int = 0,
+        val replacedCount: Int = 0,
+        val isNewFile: Boolean = false,
+        val error: String? = null,
     )
 
     private fun calculateEdit(
@@ -124,8 +127,7 @@ Expectation for required parameters:
         currentContent: String?,
         fileExists: Boolean,
         oldString: String,
-        newString: String,
-        replaceAll: Boolean,
+        newString: String
     ): EditPlan {
         if (oldString.isEmpty() && !fileExists) {
             return EditPlan(
@@ -137,55 +139,46 @@ Expectation for required parameters:
         }
 
         if (!fileExists) {
-            throw ToolExecutionException(
-                "File not found. Cannot apply edit. Use an empty old_string to create a new file."
-            )
+            return EditPlan(error = "File not found. Cannot apply edit. Use an empty old_string to create a new file.")
         }
 
         if (currentContent == null) {
-            throw ToolExecutionException("Failed to read content of existing file: $filePath")
+            return EditPlan(error = "Failed to read content of existing file: $filePath")
         }
 
         if (oldString.isEmpty()) {
-            throw ToolExecutionException("Failed to edit. Attempted to create a file that already exists.")
+            return EditPlan(error = "Failed to edit. Attempted to create a file that already exists.")
         }
 
-        val effectiveOldString = maybeAugmentOldStringForDeletion(currentContent, oldString, newString)
-        val occurrences = countOccurrences(currentContent, effectiveOldString)
+        val augmented = maybeAugmentOldStringForDeletion(currentContent, oldString, newString)
 
-        if (occurrences == 0) {
-            throw ToolExecutionException(
-                "Failed to edit, 0 occurrences found for old_string in $filePath. " +
+        val matchResult = EditHelper.findMatch(currentContent, augmented)
+            ?: return EditPlan(
+                error = "Failed to edit, 0 occurrences found for old_string in $filePath. " +
                     "The exact text was not found. Verify whitespace, indentation, and context with read_file."
             )
-        }
 
-        if (!replaceAll && occurrences > 1) {
-            throw ToolExecutionException(
-                "Failed to edit. Found $occurrences occurrences for old_string in $filePath " +
+        val effectiveOldString = matchResult.matchedOldString
+        val occurrences = matchResult.occurrences
+
+        if (occurrences > 1) {
+            return EditPlan(
+                error = "Failed to edit. Found $occurrences occurrences for old_string in $filePath " +
                     "but replace_all was not enabled."
             )
         }
 
         if (effectiveOldString == newString) {
-            throw ToolExecutionException(
-                "No changes to apply. The old_string and new_string are identical."
-            )
+            return EditPlan(error = "No changes to apply. The old_string and new_string are identical.")
         }
 
-        val newContent = if (replaceAll) {
-            currentContent.replace(effectiveOldString, newString)
-        } else {
-            currentContent.replaceFirst(effectiveOldString, newString)
-        }
+        val newContent = currentContent.replaceFirst(effectiveOldString, newString)
 
         if (newContent == currentContent) {
-            throw ToolExecutionException(
-                "No changes to apply. The new content is identical to the current content."
-            )
+            return EditPlan(error = "No changes to apply. The new content is identical to the current content.")
         }
 
-        val replacedCount = if (replaceAll) occurrences else 1
+        val replacedCount = 1
         return EditPlan(
             newContent = newContent,
             occurrences = occurrences,
@@ -206,33 +199,10 @@ Expectation for required parameters:
         return if (fileContent.contains(candidate)) candidate else oldString
     }
 
-    private fun countOccurrences(source: String, substr: String): Int {
-        if (substr.isEmpty()) return 0
-        var count = 0
-        var index = source.indexOf(substr)
-        while (index != -1) {
-            count++
-            index = source.indexOf(substr, index + substr.length)
-        }
-        return count
-    }
-
-    private fun resolvePathInsideWorkspace(path: String): File {
-        val root = config.workDir.canonicalFile
+    private fun resolvePathInsideWorkspace(path: String): File? {
         val raw = File(path)
-        if (!raw.isAbsolute) {
-            throw ToolExecutionException("File path must be absolute: $path")
-        }
-
-        val target = raw.canonicalFile
-        if (!target.path.startsWith(root.path + File.separator) && target != root) {
-            throw ToolExecutionException("Security error: Cannot access outside workspace: $path")
-        }
-        return target
-    }
-
-    private fun validateInputs(args: Args) {
-        if (args.filePath.isBlank()) throw ToolExecutionException("file_path must not be empty")
+        if (!raw.isAbsolute) return null
+        return raw.canonicalFile
     }
 
     private fun String.normalizeLineEndings(): String = replace("\r\n", "\n")
