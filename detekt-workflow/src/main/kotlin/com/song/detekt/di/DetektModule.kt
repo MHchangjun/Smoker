@@ -13,5 +13,5 @@ fun detektModule(): Module = module {
     single { DetektBranchService(get()) }
     single { DetektFixService(get(), get(), get(), get(), get()) }
     single { BuildValidationService(get()) }
-    single { DetektWorkflowRunner(get(), get(), get(), get(), get(), get(), get(), get()) }
+    single { DetektWorkflowRunner(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
 }

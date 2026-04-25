@@ -13,6 +13,7 @@ repositories {
 
 dependencies {
     api(project(":agent-tool"))
+    implementation(project(":lsp-client"))
 
     api("ai.koog:koog-agents:0.8.0-SNAPSHOT")
     api("io.insert-koin:koin-core:4.0.0")

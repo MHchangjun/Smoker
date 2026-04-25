@@ -66,7 +66,7 @@ class DetektFixService(
 
                 for ((path, finding) in localFindings) {
                     val before = gitCli.captureDirtyFingerprints(projectRoot)
-                    val base = promptBuilder.build(path, listOf(finding), detektConfig)
+                    val base = promptBuilder.build(path, listOf(finding))
                     val rawMessage = agent.start(base)
                     val outcome = commitService.commitAgentChanges(projectRoot, before, rawMessage)
                     if (outcome.committed) {
