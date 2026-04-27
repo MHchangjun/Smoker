@@ -6,6 +6,8 @@ import kotlinx.serialization.Serializable
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
+import java.text.Collator
+import java.util.Locale
 
 class GlobTool(
     private val config: Config = Config()
@@ -33,7 +35,7 @@ class GlobTool(
 
     @Serializable
     data class Args(
-        @property:LLMDescription("The glob pattern to match files against")
+        @property:LLMDescription("The glob pattern to match files against.")
         val pattern: String,
         @property:LLMDescription("The directory to search in. If not specified, the current working directory will be used. IMPORTANT: Omit this field to use the default directory. DO NOT enter \"undefined\" or \"null\" - simply omit it for the default behavior. Must be a valid directory path if provided.")
         val path: String? = null,
@@ -41,13 +43,14 @@ class GlobTool(
 
     @Serializable
     data class Result(
+        val summary: String,
         val matches: String,
         val match_count: Int,
         val was_truncated: Boolean,
     )
 
     override suspend fun execute(args: Args): Result {
-        val pattern = args.pattern.trim()
+        val pattern = stripWrappingQuotes(args.pattern.trim())
         if (pattern.isEmpty()) throw ToolExecutionException("pattern must not be blank")
         if (args.path != null && args.path.isBlank()) throw ToolExecutionException("path must not be blank when provided")
 
@@ -75,7 +78,7 @@ class GlobTool(
             throw ToolExecutionException("glob error: $errorMsg")
         }
 
-        return parseOutput(output.stdout, maxMatches)
+        return parseOutput(output.stdout, maxMatches, pattern, args.path)
     }
 
     private fun buildRipgrepCommand(pattern: String, path: String, excludePatterns: List<String>): List<String> {
@@ -94,8 +97,19 @@ class GlobTool(
         return cmd
     }
 
-    private fun parseOutput(stdout: String, maxMatches: Int): Result {
+    private fun parseOutput(stdout: String, maxMatches: Int, pattern: String, rawPath: String?): Result {
         val lines = stdout.split('\n').filter { it.isNotEmpty() }
+        val location = if (rawPath != null) "in path \"$rawPath\"" else "in the workspace directory"
+
+        if (lines.isEmpty()) {
+            return Result(
+                summary = "No files found matching pattern \"$pattern\" $location.",
+                matches = "",
+                match_count = 0,
+                was_truncated = false,
+            )
+        }
+
         val sortedLines = sortMatchPaths(lines)
         val truncatedLines = sortedLines.take(maxMatches)
         val truncatedOutput = truncatedLines.joinToString("\n")
@@ -105,11 +119,23 @@ class GlobTool(
             (sortedLines.size > maxMatches) ||
                 (truncatedOutput.toByteArray(Charsets.UTF_8).size > config.max_output_bytes)
 
+        val fileTerm = if (sortedLines.size == 1) "file" else "files"
+        val truncatedNote = if (wasTruncated) " (truncated)" else ""
+        val summary = "Found ${sortedLines.size} $fileTerm matching \"$pattern\" $location, sorted by modification time (newest first)$truncatedNote"
+
         return Result(
+            summary = summary,
             matches = finalOutput,
             match_count = truncatedLines.size,
             was_truncated = wasTruncated,
         )
+    }
+
+    private fun stripWrappingQuotes(raw: String): String {
+        if (raw.length < 2) return raw
+        val first = raw.first()
+        val last = raw.last()
+        return if ((first == '"' || first == '\'') && first == last) raw.substring(1, raw.length - 1) else raw
     }
 
     private fun truncateUtf8ToBytes(text: String, maxBytes: Int): String {
@@ -125,6 +151,7 @@ class GlobTool(
         val nowTimestamp = System.currentTimeMillis()
         val recencyThresholdMs = 24 * 60 * 60 * 1000L
         val mtimeCache = mutableMapOf<String, Long>()
+        val collator = Collator.getInstance(Locale.ROOT)
 
         fun mtime(path: String): Long {
             return mtimeCache.getOrPut(path) {
@@ -143,7 +170,7 @@ class GlobTool(
                 aIsRecent && bIsRecent -> mtimeB.compareTo(mtimeA)
                 aIsRecent -> -1
                 bIsRecent -> 1
-                else -> a.compareTo(b)
+                else -> collator.compare(a, b)
             }
         }
     }

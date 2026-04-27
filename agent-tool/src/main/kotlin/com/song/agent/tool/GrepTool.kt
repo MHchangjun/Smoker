@@ -14,7 +14,15 @@ class GrepTool(
     argsSerializer = Args.serializer(),
     resultSerializer = Result.serializer(),
     name = ToolNames.GREP,
-    description = "A powerful search tool built on ripgrep\\n\\n  Usage:\\n  - ALWAYS use Grep for search tasks. NEVER invoke `grep` or `rg` as a Bash command. The Grep tool has been optimized for correct permissions and access.\\n  - Supports full regex syntax (e.g., \"log.*Error\", \"function\\\\s+\\\\w+\")\\n  - Filter files with glob parameter (e.g., \"*.js\", \"**/*.tsx\")\\n  - Use Task tool for open-ended searches requiring multiple rounds\\n  - Pattern syntax: Uses ripgrep (not grep) - special regex characters need escaping (use `interface\\\\{\\\\}` to find `interface{}` in Go code)\\n',"
+    description = """
+A powerful search tool built on ripgrep
+
+Usage:
+- ALWAYS use Grep for search tasks. NEVER invoke `grep` or `rg` as a Bash command. The Grep tool has been optimized for correct permissions and access.
+- Supports full regex syntax (e.g., "log.*Error", "function\s+\w+")
+- Filter files with glob parameter (e.g., "*.js", "**/*.tsx") — pass the raw pattern (no surrounding quotes).
+- Pattern syntax: Uses ripgrep (not grep) - special regex characters need escaping (use `interface\{\}` to find `interface{}` in Go code)
+""".trimIndent()
 ) {
 
     data class Config(
@@ -36,16 +44,17 @@ class GrepTool(
     data class Args(
         @property:LLMDescription("The regular expression pattern to search for in file contents")
         val pattern: String,
-        @property:LLMDescription("File or directory to search in (rg PATH). Defaults to current working directory.")
-        val path: String = ".",
-        @property:LLMDescription("Glob pattern to filter files (e.g. \"*.js\", \"*.{ts,tsx}\") - maps to rg --glob")
+        @property:LLMDescription("File or directory to search in (rg PATH). Optional — defaults to the workspace root. DO NOT pass \"undefined\" or \"null\"; simply omit the field.")
+        val path: String? = null,
+        @property:LLMDescription("Glob pattern to filter files (e.g. \"*.js\", \"*.{ts,tsx}\") - maps to rg --glob. Pass the raw pattern only; do NOT wrap it in extra quotes.")
         val glob: String? = null,
-        @property:LLMDescription("Limit output to first N lines/entries. Optional - shows all matches if not specified.")
+        @property:LLMDescription("Limit output to first N lines/entries. Optional — shows all matches up to the configured cap if omitted.")
         val limit: Int? = null
     )
 
     @Serializable
     data class Result(
+        val summary: String,
         val matches: String,
         val match_count: Int,
         val was_truncated: Boolean,
@@ -55,18 +64,22 @@ class GrepTool(
         val pattern = args.pattern
         if (pattern.isBlank()) throw ToolExecutionException("pattern must not be blank")
 
-        val maxMatches = (args.limit ?: config.default_max_matches).coerceAtLeast(1)
-
-        // Security: do not allow searching outside workDir.
-        val resolvedTarget = resolvePathInsideWorkspace(args.path)
-        if (!resolvedTarget.exists()) {
-            throw ToolExecutionException("Path does not exist: ${args.path}")
+        try {
+            Regex(pattern)
+        } catch (e: Exception) {
+            throw ToolExecutionException("Invalid regular expression pattern: $pattern. Error: ${e.message}")
         }
 
-        val excludePatterns = config.exclude_patterns
+        val maxMatches = (args.limit ?: config.default_max_matches).coerceAtLeast(1)
 
-        val glob = args.glob?.trim()?.takeIf { it.isNotEmpty() }
-        val cmd = buildRipgrepCommand(args, excludePatterns, maxMatches, glob)
+        val rawPath = args.path?.trim()?.takeIf { it.isNotEmpty() } ?: "."
+        val resolvedTarget = resolvePathInsideWorkspace(rawPath)
+        if (!resolvedTarget.exists()) {
+            throw ToolExecutionException("Path does not exist: $rawPath")
+        }
+
+        val glob = args.glob?.let { stripWrappingQuotes(it.trim()) }?.takeIf { it.isNotEmpty() }
+        val cmd = buildRipgrepCommand(pattern, rawPath, config.exclude_patterns, glob)
 
         val output = JvmProcessRunner.run(
             command = cmd,
@@ -83,54 +96,84 @@ class GrepTool(
             throw ToolExecutionException("grep error: $errorMsg")
         }
 
-        return parseOutput(output.stdout, maxMatches)
+        return parseOutput(output.stdout, maxMatches, pattern, args.path, glob)
     }
 
     private fun buildRipgrepCommand(
-        args: Args,
+        pattern: String,
+        path: String,
         excludePatterns: List<String>,
-        maxMatches: Int,
         glob: String?,
     ): List<String> {
         val cmd = mutableListOf(
             "rg",
             "--line-number",
             "--no-heading",
+            "--with-filename",
             "--smart-case",
             "--no-binary",
-            "--max-count",
-            (maxMatches + 1).toString(), // request +1 to detect truncation
+            "--threads",
+            "4",
         )
 
-        for (pattern in excludePatterns) {
-            cmd += listOf("--glob", "!$pattern")
+        for (excluded in excludePatterns) {
+            cmd += listOf("--glob", "!$excluded")
         }
 
         if (glob != null) {
             cmd += listOf("--glob", glob)
         }
 
-        cmd += listOf("-e", args.pattern, args.path)
+        cmd += listOf("-e", pattern, path)
         return cmd
     }
 
-    private fun parseOutput(stdout: String, maxMatches: Int): Result {
+    private fun parseOutput(
+        stdout: String,
+        maxMatches: Int,
+        pattern: String,
+        rawPath: String?,
+        glob: String?,
+    ): Result {
         val lines = stdout.split('\n').filter { it.isNotEmpty() }
+
+        val location = if (rawPath != null) "in path \"$rawPath\"" else "in the workspace directory"
+        val filterDesc = if (glob != null) " (filter: \"$glob\")" else ""
+
+        if (lines.isEmpty()) {
+            return Result(
+                summary = "No matches found for pattern \"$pattern\" $location$filterDesc.",
+                matches = "",
+                match_count = 0,
+                was_truncated = false,
+            )
+        }
 
         val truncatedLines = lines.take(maxMatches)
         val truncatedOutput = truncatedLines.joinToString("\n")
-
         val finalOutput = truncateUtf8ToBytes(truncatedOutput, config.max_output_bytes)
 
         val wasTruncated =
             (lines.size > maxMatches) ||
                 (truncatedOutput.toByteArray(Charsets.UTF_8).size > config.max_output_bytes)
 
+        val matchTerm = if (lines.size == 1) "match" else "matches"
+        val truncatedNote = if (wasTruncated) " (truncated)" else ""
+        val summary = "Found ${lines.size} $matchTerm for pattern \"$pattern\" $location$filterDesc$truncatedNote"
+
         return Result(
+            summary = summary,
             matches = finalOutput,
             match_count = truncatedLines.size,
             was_truncated = wasTruncated,
         )
+    }
+
+    private fun stripWrappingQuotes(raw: String): String {
+        if (raw.length < 2) return raw
+        val first = raw.first()
+        val last = raw.last()
+        return if ((first == '"' || first == '\'') && first == last) raw.substring(1, raw.length - 1) else raw
     }
 
     private fun truncateUtf8ToBytes(text: String, maxBytes: Int): String {
