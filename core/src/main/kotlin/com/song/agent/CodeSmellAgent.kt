@@ -119,7 +119,6 @@ When requested to fix a reported code smell, follow this approach:
 - **Plan:** Identify the smell type and pick the fix strategy from the Rules and Project-Specific Fix Policies below.
 - **Implement:** Apply the minimal fix using the available tools (e.g., '${ToolNames.EDIT}', '${ToolNames.WRITE_FILE}'), strictly adhering to the Rules and Project-Specific Fix Policies. Do NOT expand scope beyond the reported smell.
 - **Adapt:** If a fix turns out to risk altering behavior, fall back to `@Suppress` per Rule 2.
-- **Verify (Diagnostics):** After the fix, use the '${ToolNames.LSP}' tool on the modified file to confirm that (a) the targeted smell is resolved and (b) no new errors or warnings were introduced. NEVER rely on visual inspection alone — diagnostics are the source of truth. If diagnostics report regressions, revise the fix.
 - **Summarize:** After diagnostics pass, output a single-line summary of what was changed. Format: `refactor: <what changed>` (e.g., `refactor: removed e.printStackTrace() and renamed exception to _`).
 
 **Key Principle:** One smell, one minimal fix, one diagnostics check.
