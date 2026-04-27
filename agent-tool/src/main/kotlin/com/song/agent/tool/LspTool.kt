@@ -18,20 +18,14 @@ class LspTool(
     resultSerializer = Result.serializer(),
     name = ToolNames.LSP,
     description = """
-Language Server Protocol (LSP) tool for code intelligence: definitions, references, symbols, diagnostics, and code actions.
+Language Server Protocol (LSP) tool for code intelligence: definitions, references, symbols.
 
 Usage:
 - ALWAYS use LSP as the PRIMARY tool for code intelligence queries when available. Do NOT use grep_search or glob first.
 - goToDefinition, findReferences, goToImplementation require filePath + line + character (1-based).
-- documentSymbol and diagnostics require filePath.
 - workspaceSymbol requires query (use when user asks "where is X defined?" without specifying a file).
-- codeActions require filePath + range (line/character + endLine/endCharacter). To get QuickFix for a specific diagnostic, first call diagnostics on the file, then pass the 1-based diagnosticIndex from that result.
 """.trimIndent()
 ) {
-    // Cache of the last diagnostics list shown to the LLM, keyed by filePath.
-    // CODE_ACTIONS resolves diagnosticIndex against this so the LLM never has to construct lsp4j JSON.
-    private val lastDiagnostics = ConcurrentHashMap<String, List<Diagnostic>>()
-
     @Serializable
     data class Args(
         @param:LLMDescription("LSP operation to execute.")
@@ -51,22 +45,21 @@ Usage:
         @param:LLMDescription("Symbol query for workspace symbol search.")
         val query: String? = null,
         @param:LLMDescription("Optional maximum number of results to return.")
-        val limit: Int? = null,
-        @param:LLMDescription("1-based index into the most recent diagnostics result for this filePath. Used by codeActions to target a specific diagnostic for QuickFix.")
-        val diagnosticIndex: Int? = null,
-        @param:LLMDescription("Filter code actions by kind (quickfix, refactor, etc.).")
-        val codeActionKinds: List<String>? = null
+        val limit: Int? = null
     )
 
     @Serializable
     enum class LspOperation {
-        @SerialName("goToDefinition") GO_TO_DEFINITION,
-        @SerialName("findReferences") FIND_REFERENCES,
-        @SerialName("documentSymbol") DOCUMENT_SYMBOL,
-        @SerialName("workspaceSymbol") WORKSPACE_SYMBOL,
-        @SerialName("goToImplementation") GO_TO_IMPLEMENTATION,
-        @SerialName("diagnostics") DIAGNOSTICS,
-        @SerialName("codeActions") CODE_ACTIONS
+        @SerialName("goToDefinition")
+        GO_TO_DEFINITION,
+        @SerialName("findReferences")
+        FIND_REFERENCES,
+        @SerialName("documentSymbol")
+        DOCUMENT_SYMBOL,
+        @SerialName("workspaceSymbol")
+        WORKSPACE_SYMBOL,
+        @SerialName("goToImplementation")
+        GO_TO_IMPLEMENTATION,
     }
 
     @Serializable
@@ -78,9 +71,7 @@ Usage:
         LspOperation.GO_TO_DEFINITION to "textDocument/definition",
         LspOperation.FIND_REFERENCES to "textDocument/references",
         LspOperation.DOCUMENT_SYMBOL to "textDocument/documentSymbol",
-        LspOperation.GO_TO_IMPLEMENTATION to "textDocument/implementation",
-        LspOperation.DIAGNOSTICS to "textDocument/diagnostic",
-        LspOperation.CODE_ACTIONS to "textDocument/codeAction",
+        LspOperation.GO_TO_IMPLEMENTATION to "textDocument/implementation"
     )
 
     override suspend fun execute(args: Args): Result {
@@ -129,6 +120,7 @@ Usage:
                         }.trim()
                     )
                 }
+
                 LspOperation.DOCUMENT_SYMBOL -> {
                     requireFilePath(args)
                     val symbols = lspClient.documentSymbol(args.filePath)
@@ -180,65 +172,6 @@ Usage:
                             appendLine("Implementations:")
                             locations.take(limit).forEachIndexed { i, loc ->
                                 appendLine("${i + 1}. ${formatLocation(loc)}")
-                            }
-                        }.trim()
-                    )
-                }
-
-                LspOperation.DIAGNOSTICS -> {
-                    requireFilePath(args)
-                    val diags = lspClient.diagnostics(args.filePath)
-                    if (diags.isEmpty()) {
-                        lastDiagnostics.remove(args.filePath)
-                        return Result("No diagnostics found.")
-                    }
-                    val sliced = diags.take(limit)
-                    lastDiagnostics[args.filePath] = sliced
-                    Result(
-                        buildString {
-                            appendLine("Diagnostics (${diags.size} issues):")
-                            sliced.forEachIndexed { i, diag ->
-                                val severity = LspDiagnosticSeverity.nameOf(diag.severity)
-                                val position = "${diag.range.start.line + 1}:${diag.range.start.character + 1}"
-                                val code = diag.code?.get()?.let { " ($it)" } ?: ""
-                                val source = if (diag.source != null) " [${diag.source}]" else ""
-                                appendLine("${i + 1}. [${severity.uppercase()}] $position$code$source: ${diag.message}")
-                            }
-                        }.trim()
-                    )
-                }
-
-                LspOperation.CODE_ACTIONS -> {
-                    requirePosition(args)
-                    val diagnostics: List<Diagnostic> = args.diagnosticIndex?.let { idx ->
-                        val cached = lastDiagnostics[args.filePath]
-                            ?: return Result("CODE_ACTIONS: no cached diagnostics for ${args.filePath}. Call diagnostics first.")
-                        val diag = cached.getOrNull(idx - 1)
-                            ?: return Result("CODE_ACTIONS: diagnosticIndex $idx out of range (1..${cached.size}).")
-                        listOf(diag)
-                    } ?: emptyList()
-
-                    // When targeting a diagnostic, use its range so the server returns matching QuickFixes.
-                    val target = diagnostics.firstOrNull()?.range
-                    val startLine = target?.let { it.start.line + 1 } ?: args.line!!
-                    val startChar = target?.let { it.start.character + 1 } ?: args.character!!
-                    val endLine = target?.let { it.end.line + 1 } ?: args.endLine ?: args.line!!
-                    val endChar = target?.let { it.end.character + 1 } ?: args.endCharacter ?: args.character!!
-
-                    val actions = lspClient.codeActions(
-                        args.filePath, startLine, startChar, endLine, endChar,
-                        diagnostics = diagnostics,
-                        codeActionKinds = args.codeActionKinds
-                    )
-                    if (actions.isEmpty()) return Result("No code actions available.")
-                    Result(
-                        buildString {
-                            appendLine("Code actions:")
-                            actions.take(limit).forEachIndexed { i, action ->
-                                val kind = if (action.kind != null) " [${action.kind}]" else ""
-                                val preferred = if (action.isPreferred == true) " ★" else ""
-                                val hasEdit = if (action.edit != null) " (has edit)" else ""
-                                appendLine("${i + 1}. ${action.title}$kind$preferred$hasEdit")
                             }
                         }.trim()
                     )
