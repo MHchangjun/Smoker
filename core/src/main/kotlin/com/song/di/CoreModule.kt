@@ -19,7 +19,7 @@ fun coreModule(root: Path): Module = module {
     single { LspProcessManager(projectRoot = root) }
     single { LspClient(get(), root) }
 
-    single { CodeSmellAgent(root.toAbsolutePath().normalize().toString(), get(), get(), get(), get(), get()) }
+    single { CodeSmellAgent(root.toAbsolutePath().normalize().toString(), get(), get(), get(), get(), get(), get(), get()) }
 
     single { GitCli() }
     single { RepositorySyncService(get()) }

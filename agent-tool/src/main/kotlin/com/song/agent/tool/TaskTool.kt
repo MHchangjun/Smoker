@@ -9,7 +9,7 @@ import kotlinx.serialization.Serializable
 data class TaskSubagentDefinition(
     val name: String,
     val description: String,
-    val tool: Tool<String, AIAgentTool.AgentToolResult<String>>
+    val tool: Tool<AIAgentTool.AgentToolInput<String>, AIAgentTool.AgentToolResult<String>>
 )
 
 class TaskTool(
@@ -97,7 +97,7 @@ class TaskTool(
             // Match qwen task.ts semantics:
             // - description: visibility/tracking metadata
             // - prompt: the only content sent to sub-agent execution context
-            val delegatedResult = subagent.tool.execute(prompt)
+            val delegatedResult = subagent.tool.execute(AIAgentTool.AgentToolInput(prompt))
             if (!delegatedResult.successful) {
                 failedResult(
                     subagentType = subagentType,

@@ -2,8 +2,6 @@ package com.song.detekt
 
 import com.song.git.PullRequestPublishService
 import com.song.git.RepositorySyncService
-import com.song.lsp.LspClient
-import kotlinx.coroutines.runBlocking
 import java.io.File
 
 class DetektWorkflowRunner(
@@ -15,7 +13,6 @@ class DetektWorkflowRunner(
     private val fixService: DetektFixService,
     private val buildValidationService: BuildValidationService,
     private val publishService: PullRequestPublishService,
-    private val lspClient: LspClient,
 ) {
     fun run(projectRoot: File, detektConfig: DetektConfigContext?) {
         val context = contextFactory.create(projectRoot)
@@ -38,39 +35,18 @@ class DetektWorkflowRunner(
             return
         }
 
-        startLsp()
-        try {
-            val outcomes = fixService.fixAll(detektConfig, context, context.projectRoot)
-            if (outcomes.isEmpty()) {
-                println("No commits created. Skip push/PR.")
-                return
-            }
-
-            val compileTask = ":${context.module}:compilePlayStoreDebugKotlin"
-            if (!buildValidationService.verifyCompileOrRollback(context.projectRoot, outcomes, compileTask)) {
-                println("Build validation failed. Skip push/PR.")
-                return
-            }
-
-            publishService.pushAndCreatePr(context.projectRoot, baseBranch = "develop")
-        } finally {
-            stopLsp()
+        val outcomes = fixService.fixAll(detektConfig, context, context.projectRoot)
+        if (outcomes.isEmpty()) {
+            println("No commits created. Skip push/PR.")
+            return
         }
-    }
 
-    private fun startLsp() {
-        try {
-            runBlocking { lspClient.start() }
-            println("Kotlin LSP server started.")
-        } catch (e: Exception) {
-            println("Failed to start Kotlin LSP server: ${e.message}. Continuing without LSP.")
+        val compileTask = ":${context.module}:compilePlayStoreDebugKotlin"
+        if (!buildValidationService.verifyCompileOrRollback(context.projectRoot, outcomes, compileTask)) {
+            println("Build validation failed. Skip push/PR.")
+            return
         }
-    }
 
-    private fun stopLsp() {
-        try {
-            runBlocking { lspClient.stop() }
-        } catch (_: Exception) {
-        }
+        publishService.pushAndCreatePr(context.projectRoot, baseBranch = "develop")
     }
 }

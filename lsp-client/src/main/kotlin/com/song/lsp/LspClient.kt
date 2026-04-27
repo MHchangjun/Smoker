@@ -1,52 +1,93 @@
 package com.song.lsp
 
-import kotlinx.serialization.builtins.ListSerializer
-import kotlinx.serialization.json.*
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.future.await
+import kotlinx.coroutines.withTimeout
+import org.eclipse.lsp4j.*
+import org.eclipse.lsp4j.jsonrpc.Launcher
+import org.eclipse.lsp4j.launch.LSPLauncher
+import org.eclipse.lsp4j.services.LanguageClient
+import org.eclipse.lsp4j.services.LanguageServer
 import java.io.Closeable
 import java.io.File
 import java.nio.file.Path
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ConcurrentHashMap
 import java.util.logging.Logger
 import kotlin.io.path.walk
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 
 class LspClient(
     private val processManager: LspProcessManager,
     private val projectRoot: Path
-) : Closeable {
+) : LanguageClient, Closeable {
     private val log = Logger.getLogger(LspClient::class.java.simpleName)
-    private lateinit var transport: JsonRpcTransport
+    private lateinit var server: LanguageServer
+    private lateinit var launcher: Launcher<LanguageServer>
     private val fileTracker = LspFileTracker()
-    private val json = Json { ignoreUnknownKeys = true }
+
+    // Diagnostics cache (from publishDiagnostics notifications)
+    private val diagnosticsCache = ConcurrentHashMap<String, List<Diagnostic>>()
+    private val diagnosticsWaiters = ConcurrentHashMap<String, CompletableDeferred<List<Diagnostic>>>()
 
     @Volatile
     var initialized: Boolean = false
         private set
 
+    private var serverCapabilities: ServerCapabilities? = null
+
+    // --- LanguageClient implementation ---
+
+    override fun telemetryEvent(obj: Any?) {}
+    override fun logMessage(message: MessageParams?) {
+        message?.let { log.fine("LSP server: [${it.type}] ${it.message}") }
+    }
+
+    override fun showMessage(messageParams: MessageParams?) {}
+    override fun showMessageRequest(requestParams: ShowMessageRequestParams?): CompletableFuture<MessageActionItem> {
+        return CompletableFuture.completedFuture(null)
+    }
+
+    override fun publishDiagnostics(diagnostics: PublishDiagnosticsParams?) {
+        diagnostics ?: return
+        val uri = diagnostics.uri
+        val diags = diagnostics.diagnostics
+        diagnosticsCache[uri] = diags
+        diagnosticsWaiters.remove(uri)?.complete(diags)
+    }
+
+    // --- Lifecycle ---
+
     suspend fun start() {
         val (input, output) = processManager.start()
-        transport = JsonRpcTransport(input, output)
-        transport.startReading()
+        launcher = LSPLauncher.createClientLauncher(this, input, output)
+        server = launcher.remoteProxy
+        launcher.startListening()
         initialize()
     }
 
     suspend fun stop() {
         if (initialized) {
             try {
-                transport.request("shutdown", JsonNull)
-                transport.notify("exit", JsonNull)
+                server.shutdown().await()
+                server.exit()
             } catch (_: Exception) {
             }
             initialized = false
         }
-        transport.close()
         processManager.stop()
         fileTracker.clear()
+        diagnosticsCache.clear()
+        diagnosticsWaiters.clear()
     }
 
     override fun close() {
         if (initialized) {
             try {
-                transport.close()
+                server.shutdown()?.get(5, java.util.concurrent.TimeUnit.SECONDS)
+                server.exit()
             } catch (_: Exception) {
             }
             processManager.stop()
@@ -58,154 +99,124 @@ class LspClient(
     // --- LSP Methods ---
 
     suspend fun goToDefinition(filePath: String, line: Int, character: Int): List<Location> {
+        requireCapability("textDocument/definition")
         ensureFileSync(filePath)
-        val params = textDocumentPositionParams(filePath, line, character)
-        val result = transport.request("textDocument/definition", params) ?: return emptyList()
-        return parseLocations(result)
+        val params = DefinitionParams(
+            TextDocumentIdentifier(fileUri(filePath)),
+            Position(line - 1, character - 1)
+        )
+        val result = server.textDocumentService.definition(params).await() ?: return emptyList()
+        return if (result.isLeft) {
+            result.left.filterIsInstance<Location>()
+        } else {
+            result.right.map { link -> Location(link.targetUri, link.targetRange) }
+        }
     }
 
     suspend fun findReferences(filePath: String, line: Int, character: Int, includeDeclaration: Boolean = false): List<Location> {
+        requireCapability("textDocument/references")
         ensureFileSync(filePath)
-        val params = json.encodeToJsonElement(
-            ReferenceParams(
-                textDocument = TextDocumentIdentifier(uri = fileUri(filePath)),
-                position = Position(line = line - 1, character = character - 1),
-                context = ReferenceContext(includeDeclaration = includeDeclaration)
-            )
+        val params = ReferenceParams(
+            TextDocumentIdentifier(fileUri(filePath)),
+            Position(line - 1, character - 1),
+            ReferenceContext(includeDeclaration)
         )
-        val result = transport.request("textDocument/references", params) ?: return emptyList()
-        return parseLocations(result)
+        @Suppress("UNCHECKED_CAST")
+        return server.textDocumentService.references(params).await() as? List<Location> ?: emptyList()
     }
 
     suspend fun hover(filePath: String, line: Int, character: Int): String? {
+        requireCapability("textDocument/hover")
         ensureFileSync(filePath)
-        val params = textDocumentPositionParams(filePath, line, character)
-        val result = transport.request("textDocument/hover", params) ?: return null
-        if (result is JsonNull) return null
-        val hover = json.decodeFromJsonElement(HoverResult.serializer(), result)
-        return extractHoverContent(hover.contents)
+        val params = HoverParams(
+            TextDocumentIdentifier(fileUri(filePath)),
+            Position(line - 1, character - 1)
+        )
+        val result = server.textDocumentService.hover(params).await() ?: return null
+        return extractHoverContent(result)
     }
 
     suspend fun documentSymbol(filePath: String): List<DocumentSymbol> {
         ensureFileSync(filePath)
-        val params = json.encodeToJsonElement(
-            DocumentSymbolParams(textDocument = TextDocumentIdentifier(uri = fileUri(filePath)))
-        )
-        val result = transport.request("textDocument/documentSymbol", params) ?: return emptyList()
-        return try {
-            json.decodeFromJsonElement(ListSerializer(DocumentSymbol.serializer()), result)
-        } catch (_: Exception) {
-            emptyList()
+        val params = DocumentSymbolParams(TextDocumentIdentifier(fileUri(filePath)))
+        val result = server.textDocumentService.documentSymbol(params).await() ?: return emptyList()
+        return result.mapNotNull { either ->
+            if (either.isRight) either.right else null
         }
     }
 
     suspend fun workspaceSymbol(query: String): List<SymbolInformation> {
-        val params = json.encodeToJsonElement(WorkspaceSymbolParams(query = query))
-        val result = transport.request("workspace/symbol", params) ?: return emptyList()
-        return try {
-            json.decodeFromJsonElement(ListSerializer(SymbolInformation.serializer()), result)
-        } catch (_: Exception) {
-            emptyList()
+        val result = server.workspaceService.symbol(WorkspaceSymbolParams(query)).await() ?: return emptyList()
+        return if (result.isLeft) {
+            result.left.filterIsInstance<SymbolInformation>()
+        } else {
+            // WorkspaceSymbol list — convert to SymbolInformation
+            result.right.map { ws ->
+                SymbolInformation(ws.name, ws.kind, ws.location?.left ?: Location(), ws.containerName)
+            }
         }
     }
 
     suspend fun goToImplementation(filePath: String, line: Int, character: Int): List<Location> {
+        requireCapability("textDocument/implementation")
         ensureFileSync(filePath)
-        val params = textDocumentPositionParams(filePath, line, character)
-        val result = transport.request("textDocument/implementation", params) ?: return emptyList()
-        return parseLocations(result)
-    }
-
-    suspend fun prepareCallHierarchy(filePath: String, line: Int, character: Int): List<CallHierarchyItem> {
-        ensureFileSync(filePath)
-        val params = textDocumentPositionParams(filePath, line, character)
-        val result = transport.request("textDocument/prepareCallHierarchy", params) ?: return emptyList()
-        return try {
-            json.decodeFromJsonElement(ListSerializer(CallHierarchyItem.serializer()), result)
-        } catch (_: Exception) {
-            emptyList()
-        }
-    }
-
-    suspend fun incomingCalls(item: CallHierarchyItem): List<CallHierarchyIncomingCall> {
-        val params = json.encodeToJsonElement(CallHierarchyIncomingCallsParams.serializer(), CallHierarchyIncomingCallsParams(item = item))
-        val result = transport.request("callHierarchy/incomingCalls", params) ?: return emptyList()
-        return try {
-            json.decodeFromJsonElement(ListSerializer(CallHierarchyIncomingCall.serializer()), result)
-        } catch (_: Exception) {
-            emptyList()
-        }
-    }
-
-    suspend fun outgoingCalls(item: CallHierarchyItem): List<CallHierarchyOutgoingCall> {
-        val params = json.encodeToJsonElement(CallHierarchyOutgoingCallsParams.serializer(), CallHierarchyOutgoingCallsParams(item = item))
-        val result = transport.request("callHierarchy/outgoingCalls", params) ?: return emptyList()
-        return try {
-            json.decodeFromJsonElement(ListSerializer(CallHierarchyOutgoingCall.serializer()), result)
-        } catch (_: Exception) {
-            emptyList()
+        val params = ImplementationParams(
+            TextDocumentIdentifier(fileUri(filePath)),
+            Position(line - 1, character - 1)
+        )
+        val result = server.textDocumentService.implementation(params).await() ?: return emptyList()
+        return if (result.isLeft) {
+            result.left.filterIsInstance<Location>()
+        } else {
+            result.right.map { link -> Location(link.targetUri, link.targetRange) }
         }
     }
 
     suspend fun diagnostics(filePath: String): List<Diagnostic> {
         ensureFileSync(filePath)
+        val uri = fileUri(filePath)
         // Try pull-model diagnostics first
-        val params = json.encodeToJsonElement(
-            DocumentDiagnosticParams.serializer(),
-            DocumentDiagnosticParams(textDocument = TextDocumentIdentifier(uri = fileUri(filePath)))
-        )
         return try {
-            val result = transport.request("textDocument/diagnostic", params)
-            if (result != null) {
-                val items = result.jsonObject["items"]
-                if (items != null) {
-                    json.decodeFromJsonElement(ListSerializer(Diagnostic.serializer()), items)
-                } else {
-                    emptyList()
-                }
+            val params = DocumentDiagnosticParams(TextDocumentIdentifier(uri))
+            val report = server.textDocumentService.diagnostic(params).await()
+            if (report.isRelatedFullDocumentDiagnosticReport) {
+                report.relatedFullDocumentDiagnosticReport?.items ?: emptyList()
             } else {
-                emptyList()
+                diagnosticsCache[uri] ?: emptyList()
             }
         } catch (_: Exception) {
             // Fallback to cached publishDiagnostics notifications
-            transport.getCachedDiagnostics(fileUri(filePath))
+            diagnosticsCache[uri] ?: emptyList()
         }
     }
 
-    suspend fun workspaceDiagnostics(): Map<String, List<Diagnostic>> {
-        // Collect all cached diagnostics from publishDiagnostics notifications
-        // kotlin-language-server does not typically support workspace/diagnostic pull
+    suspend fun openFileForDiagnostics(filePath: String) {
+        ensureFileSync(filePath)
+    }
+
+    suspend fun openAndAwaitDiagnostics(filePath: String, timeout: Duration = 30.seconds): List<Diagnostic> {
+        ensureFileSync(filePath)
+        val uri = fileUri(filePath)
+        // Already cached?
+        diagnosticsCache[uri]?.let { if (it.isNotEmpty()) return it }
+
+        val waiter = CompletableDeferred<List<Diagnostic>>()
+        diagnosticsWaiters[uri] = waiter
         return try {
-            val params = json.encodeToJsonElement(
-                kotlinx.serialization.json.JsonObject.serializer(),
-                kotlinx.serialization.json.JsonObject(mapOf(
-                    "previousResultIds" to kotlinx.serialization.json.JsonArray(emptyList())
-                ))
-            )
-            val result = transport.request("workspace/diagnostic", params)
-            if (result != null) {
-                val items = result.jsonObject["items"]
-                if (items != null) {
-                    val reports = items as? kotlinx.serialization.json.JsonArray ?: return emptyMap()
-                    val map = mutableMapOf<String, List<Diagnostic>>()
-                    for (report in reports) {
-                        val obj = report.jsonObject
-                        val uri = obj["uri"]?.jsonPrimitive?.content ?: continue
-                        val diags = obj["items"]?.let {
-                            json.decodeFromJsonElement(ListSerializer(Diagnostic.serializer()), it)
-                        } ?: emptyList()
-                        map[uri] = diags
-                    }
-                    map
-                } else {
-                    emptyMap()
-                }
-            } else {
-                emptyMap()
-            }
+            withTimeout(timeout) { waiter.await() }
         } catch (_: Exception) {
-            emptyMap()
+            diagnosticsCache[uri] ?: emptyList()
+        } finally {
+            diagnosticsWaiters.remove(uri)
         }
+    }
+
+    fun getAllCachedDiagnostics(): Map<String, List<Diagnostic>> = diagnosticsCache.toMap()
+
+    fun getCachedDiagnostics(uri: String): List<Diagnostic> = diagnosticsCache[uri] ?: emptyList()
+
+    fun clearDiagnosticsCache() {
+        diagnosticsCache.clear()
     }
 
     suspend fun codeActions(
@@ -217,71 +228,153 @@ class LspClient(
         diagnostics: List<Diagnostic> = emptyList(),
         codeActionKinds: List<String>? = null
     ): List<CodeAction> {
+        requireCapability("textDocument/codeAction")
         ensureFileSync(filePath)
-        val params = json.encodeToJsonElement(
-            CodeActionParams.serializer(),
-            CodeActionParams(
-                textDocument = TextDocumentIdentifier(uri = fileUri(filePath)),
-                range = Range(
-                    start = Position(line = startLine - 1, character = startCharacter - 1),
-                    end = Position(line = endLine - 1, character = endCharacter - 1)
-                ),
-                context = CodeActionContext(
-                    diagnostics = diagnostics,
-                    only = codeActionKinds
-                )
-            )
+        val context = CodeActionContext(diagnostics).apply {
+            if (codeActionKinds != null) only = codeActionKinds
+        }
+        val params = CodeActionParams(
+            TextDocumentIdentifier(fileUri(filePath)),
+            Range(
+                Position(startLine - 1, startCharacter - 1),
+                Position(endLine - 1, endCharacter - 1)
+            ),
+            context
         )
-        val result = transport.request("textDocument/codeAction", params) ?: return emptyList()
-        return try {
-            json.decodeFromJsonElement(ListSerializer(CodeAction.serializer()), result)
-        } catch (_: Exception) {
-            emptyList()
+        val result = server.textDocumentService.codeAction(params).await() ?: return emptyList()
+        return result.mapNotNull { either ->
+            if (either.isRight) either.right else null
+        }
+    }
+
+    /**
+     * 특정 diagnostic에 대한 QuickFix code action을 가져온다.
+     */
+    suspend fun getQuickFixes(filePath: String, diagnostic: Diagnostic): List<CodeAction> {
+        requireCapability("textDocument/codeAction")
+        ensureFileSync(filePath)
+        val params = CodeActionParams(
+            TextDocumentIdentifier(fileUri(filePath)),
+            diagnostic.range,
+            CodeActionContext(listOf(diagnostic), listOf(CodeActionKind.QuickFix))
+        )
+        val result = server.textDocumentService.codeAction(params).await() ?: return emptyList()
+        return result.mapNotNull { either ->
+            if (either.isRight) either.right else null
+        }
+    }
+
+    /**
+     * CodeAction을 적용한다.
+     * 1) WorkspaceEdit가 있으면 파일에 직접 적용
+     * 2) Command가 있으면 서버에서 실행
+     */
+    suspend fun applyAction(action: CodeAction) {
+        action.edit?.let { applyWorkspaceEdit(it) }
+        action.command?.let { cmd ->
+            server.workspaceService.executeCommand(
+                ExecuteCommandParams(cmd.command, cmd.arguments)
+            ).await()
+        }
+    }
+
+    private fun applyWorkspaceEdit(edit: WorkspaceEdit) {
+        val changes = edit.changes ?: return
+        for ((uri, edits) in changes) {
+            val path = uriToPath(uri)
+            val file = File(path)
+            if (!file.exists()) continue
+
+            val lines = file.readText().lines().toMutableList()
+            // 아래에서 위로 적용하여 offset 보존
+            val sorted = edits.sortedByDescending { it.range.start.line }
+            for (textEdit in sorted) {
+                applyTextEdit(lines, textEdit)
+            }
+            file.writeText(lines.joinToString("\n"))
+        }
+    }
+
+    private fun applyTextEdit(lines: MutableList<String>, edit: TextEdit) {
+        val startLine = edit.range.start.line
+        val startChar = edit.range.start.character
+        val endLine = edit.range.end.line
+        val endChar = edit.range.end.character
+
+        if (startLine >= lines.size) return
+
+        val prefix = if (startChar <= lines[startLine].length) {
+            lines[startLine].substring(0, startChar)
+        } else lines[startLine]
+
+        val suffix = if (endLine < lines.size && endChar <= lines[endLine].length) {
+            lines[endLine].substring(endChar)
+        } else ""
+
+        val removeCount = (endLine - startLine + 1).coerceAtMost(lines.size - startLine)
+        repeat(removeCount) {
+            if (startLine < lines.size) lines.removeAt(startLine)
+        }
+
+        val newContent = prefix + edit.newText + suffix
+        val newLines = newContent.split("\n")
+        newLines.reversed().forEach { line ->
+            lines.add(startLine, line)
         }
     }
 
     // --- File Sync ---
 
-    private suspend fun ensureFileSync(filePath: String) {
+    private fun ensureFileSync(filePath: String) {
         val uri = fileUri(filePath)
         val content = File(filePath).readText()
 
         if (!fileTracker.isOpen(uri)) {
-            val params = json.encodeToJsonElement(
+            server.textDocumentService.didOpen(
                 DidOpenTextDocumentParams(
-                    textDocument = TextDocumentItem(
-                        uri = uri,
-                        languageId = "kotlin",
-                        version = 1,
-                        text = content
-                    )
+                    TextDocumentItem(uri, "kotlin", 1, content)
                 )
             )
-            transport.notify("textDocument/didOpen", params)
             fileTracker.markOpened(uri)
         } else {
             val version = fileTracker.incrementVersion(uri)
-            val params = json.encodeToJsonElement(
+            server.textDocumentService.didChange(
                 DidChangeTextDocumentParams(
-                    textDocument = VersionedTextDocumentIdentifier(uri = uri, version = version),
-                    contentChanges = listOf(TextDocumentContentChangeEvent(text = content))
+                    VersionedTextDocumentIdentifier(uri, version),
+                    listOf(TextDocumentContentChangeEvent(content))
                 )
             )
-            transport.notify("textDocument/didChange", params)
         }
     }
 
     // --- Initialize ---
 
     private suspend fun initialize() {
-        val params = json.encodeToJsonElement(
-            InitializeParams(
-                processId = ProcessHandle.current().pid().toInt(),
-                rootUri = fileUri(projectRoot.toAbsolutePath().normalize().toString())
-            )
-        )
-        transport.request("initialize", params, timeout = 5.minutes)
-        transport.notify("initialized", JsonObject(emptyMap()))
+        val capabilities = ClientCapabilities().apply {
+            textDocument = TextDocumentClientCapabilities().apply {
+                synchronization = SynchronizationCapabilities().apply {
+                    didSave = true
+                    dynamicRegistration = false
+                }
+                codeAction = CodeActionCapabilities().apply {
+                    dynamicRegistration = false
+                }
+            }
+        }
+        val params = InitializeParams().apply {
+            processId = ProcessHandle.current().pid().toInt()
+            rootUri = fileUri(projectRoot.toAbsolutePath().normalize().toString())
+            this.capabilities = capabilities
+        }
+
+        val result = withTimeout(5.minutes) {
+            server.initialize(params).await()
+        }
+        serverCapabilities = result.capabilities
+        log.info("LSP server capabilities: definition=${result.capabilities.definitionProvider != null}, " +
+            "hover=${result.capabilities.hoverProvider != null}")
+
+        server.initialized(InitializedParams())
         initialized = true
         verify()
     }
@@ -296,22 +389,41 @@ class LspClient(
             }
 
         try {
-            val uri = fileUri(testFile.toAbsolutePath().normalize().toString())
-            val content = testFile.toFile().readText()
-            val openParams = json.encodeToJsonElement(
-                DidOpenTextDocumentParams(
-                    textDocument = TextDocumentItem(
-                        uri = uri, languageId = "kotlin", version = 1, text = content
-                    )
-                )
-            )
-            transport.notify("textDocument/didOpen", openParams)
-            fileTracker.markOpened(uri)
+            val filePath = testFile.toAbsolutePath().normalize().toString()
+            ensureFileSync(filePath)
 
-            val symbolParams = json.encodeToJsonElement(
-                DocumentSymbolParams(textDocument = TextDocumentIdentifier(uri = uri))
-            )
-            transport.request("textDocument/documentSymbol", symbolParams)
+            // Basic syntax check — documentSymbol
+            val symbolParams = DocumentSymbolParams(TextDocumentIdentifier(fileUri(filePath)))
+            server.textDocumentService.documentSymbol(symbolParams).await()
+            log.info("LSP verify: documentSymbol OK")
+
+            // Semantic check — try goToDefinition on a known symbol
+            if (supports("textDocument/definition")) {
+                try {
+                    val content = testFile.toFile().readText()
+                    val lines = content.lines()
+                    val targetLine = lines.indexOfFirst { line ->
+                        val trimmed = line.trim()
+                        trimmed.startsWith("class ") || trimmed.startsWith("fun ") ||
+                            trimmed.startsWith("object ") || trimmed.startsWith("interface ")
+                    }
+                    if (targetLine >= 0) {
+                        val line = lines[targetLine]
+                        val keyword = line.trimStart()
+                        val nameStart = keyword.indexOfFirst { it == ' ' } + 1
+                        val char = line.indexOf(keyword[nameStart])
+                        val defParams = DefinitionParams(
+                            TextDocumentIdentifier(fileUri(filePath)),
+                            Position(targetLine, char)
+                        )
+                        server.textDocumentService.definition(defParams).await()
+                        log.info("LSP verify: goToDefinition OK (semantic analysis working)")
+                    }
+                } catch (e: Exception) {
+                    log.warning("LSP verify: goToDefinition failed — semantic analysis may be limited: ${e.message}")
+                }
+            }
+
             log.info("LSP verify: OK")
         } catch (e: Exception) {
             log.warning("LSP verify failed: ${e.message}")
@@ -319,45 +431,50 @@ class LspClient(
         }
     }
 
-    // --- Helpers ---
+    // --- Capability Check ---
 
-    private fun textDocumentPositionParams(filePath: String, line: Int, character: Int): JsonElement {
-        return json.encodeToJsonElement(
-            TextDocumentPositionParams(
-                textDocument = TextDocumentIdentifier(uri = fileUri(filePath)),
-                position = Position(line = line - 1, character = character - 1) // convert 1-based to 0-based
-            )
-        )
-    }
-
-    private fun parseLocations(element: JsonElement): List<Location> {
-        return try {
-            when (element) {
-                is JsonArray -> json.decodeFromJsonElement(ListSerializer(Location.serializer()), element)
-                is JsonObject -> listOf(json.decodeFromJsonElement(Location.serializer(), element))
-                else -> emptyList()
-            }
-        } catch (_: Exception) {
-            emptyList()
+    fun supports(method: String): Boolean {
+        val caps = serverCapabilities ?: return false
+        return when (method) {
+            "textDocument/definition" -> caps.definitionProvider?.let {
+                it.isLeft && it.left == true || it.isRight
+            } ?: false
+            "textDocument/references" -> caps.referencesProvider?.let {
+                it.isLeft && it.left == true || it.isRight
+            } ?: false
+            "textDocument/hover" -> caps.hoverProvider?.let {
+                it.isLeft && it.left == true || it.isRight
+            } ?: false
+            "textDocument/documentSymbol" -> caps.documentSymbolProvider?.let {
+                it.isLeft && it.left == true || it.isRight
+            } ?: false
+            "textDocument/implementation" -> caps.implementationProvider != null
+            "textDocument/diagnostic" -> caps.diagnosticProvider != null
+            "textDocument/codeAction" -> caps.codeActionProvider?.let {
+                it.isLeft && it.left == true || it.isRight
+            } ?: false
+            else -> true
         }
     }
 
-    private fun extractHoverContent(contents: JsonElement): String? {
-        return when (contents) {
-            is JsonPrimitive -> contents.content
-            is JsonObject -> {
-                // MarkupContent: { kind: "markdown"|"plaintext", value: "..." }
-                contents["value"]?.jsonPrimitive?.content
+    private fun requireCapability(method: String) {
+        if (!supports(method)) {
+            throw LspException("LSP server does not support '$method'")
+        }
+    }
+
+    // --- Helpers ---
+
+    private fun extractHoverContent(hover: Hover): String? {
+        val contents = hover.contents
+        return when {
+            contents.isLeft -> {
+                contents.left.joinToString("\n") { item ->
+                    if (item.isLeft) item.left else item.right.value
+                }
             }
-            is JsonArray -> {
-                // List of MarkedString
-                contents.mapNotNull { item ->
-                    when (item) {
-                        is JsonPrimitive -> item.content
-                        is JsonObject -> item["value"]?.jsonPrimitive?.content
-                        else -> null
-                    }
-                }.joinToString("\n")
+            contents.isRight -> {
+                contents.right.value
             }
             else -> null
         }

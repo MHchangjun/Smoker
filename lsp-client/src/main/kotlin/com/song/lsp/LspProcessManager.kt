@@ -1,28 +1,58 @@
 package com.song.lsp
 
+import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
+import java.net.Socket
 import java.nio.file.Path
+import java.util.logging.Logger
 
 class LspProcessManager(
-    private val serverCommand: String = "kotlin-language-server",
-    private val projectRoot: Path
+    private val serverCommand: String = "kotlin-lsp",
+    private val projectRoot: Path,
+    private val port: Int = 0
 ) {
+    private val log = Logger.getLogger(LspProcessManager::class.java.simpleName)
     private var process: Process? = null
+    private var socket: Socket? = null
+
+    val stderrLogFile: File = File(projectRoot.toFile(), ".gradle/lsp-stderr.log")
 
     fun start(): Pair<InputStream, OutputStream> {
-        val builder = ProcessBuilder(serverCommand)
+        val actualPort = if (port == 0) findAvailablePort() else port
+        stderrLogFile.parentFile?.mkdirs()
+
+        val builder = ProcessBuilder(serverCommand, "--socket", "127.0.0.1:$actualPort")
             .directory(projectRoot.toFile())
-            .redirectError(ProcessBuilder.Redirect.DISCARD)
+            .redirectErrorStream(false)
+            .redirectError(ProcessBuilder.Redirect.appendTo(stderrLogFile))
+
+        val env = builder.environment()
+        inheritEnvIfPresent(env, "JAVA_HOME")
+        inheritEnvIfPresent(env, "ANDROID_HOME")
+        inheritEnvIfPresent(env, "ANDROID_SDK_ROOT")
+        inheritEnvIfPresent(env, "GRADLE_USER_HOME")
+        inheritEnvIfPresent(env, "PATH")
+
+        log.info("Starting LSP server (socket mode, port=$actualPort) in $projectRoot")
 
         val proc = builder.start()
         process = proc
 
-        // Returns (server stdout for reading, server stdin for writing)
-        return proc.inputStream to proc.outputStream
+        val sock = waitForSocket(actualPort, proc)
+        socket = sock
+
+        log.info("Connected to LSP server on port $actualPort")
+        return sock.getInputStream() to sock.getOutputStream()
     }
 
     fun stop() {
+        try {
+            socket?.close()
+        } catch (_: Exception) {
+        } finally {
+            socket = null
+        }
         val proc = process ?: return
         try {
             proc.destroyForcibly()
@@ -34,4 +64,33 @@ class LspProcessManager(
     }
 
     fun isAlive(): Boolean = process?.isAlive == true
+
+    private fun waitForSocket(port: Int, proc: Process, maxWaitMs: Long = 30_000): Socket {
+        val start = System.currentTimeMillis()
+        val retryIntervalMs = 200L
+
+        while (System.currentTimeMillis() - start < maxWaitMs) {
+            if (!proc.isAlive) {
+                throw LspException("LSP server process exited before accepting connections (exit=${proc.exitValue()}). Check ${stderrLogFile.absolutePath}")
+            }
+            try {
+                return Socket("127.0.0.1", port)
+            } catch (_: java.net.ConnectException) {
+                Thread.sleep(retryIntervalMs)
+            }
+        }
+        proc.destroyForcibly()
+        throw LspException("LSP server did not start listening on port $port within ${maxWaitMs}ms. Check ${stderrLogFile.absolutePath}")
+    }
+
+    private fun findAvailablePort(): Int {
+        java.net.ServerSocket(0).use { return it.localPort }
+    }
+
+    private fun inheritEnvIfPresent(env: MutableMap<String, String>, key: String) {
+        val value = System.getenv(key)
+        if (value != null) {
+            env[key] = value
+        }
+    }
 }

@@ -20,6 +20,8 @@ class CodeSmellAgent(
     private val editTool: EditTool,
     private val readFileTool: ReadFileTool,
     private val writeFileTool: WriteFileTool,
+    private val grepTool: GrepTool,
+    private val globTool: GlobTool,
     private val lspTool: LspTool
 ) {
     suspend fun start(userPrompt: String): String {
@@ -81,6 +83,8 @@ class CodeSmellAgent(
                 tool(shellTool)
                 tool(readFileTool)
                 tool(writeFileTool)
+                tool(grepTool)
+                tool(globTool)
                 tool(lspTool)
             }
         )
@@ -111,6 +115,14 @@ You are a refactoring agent running in a CLI environment.
 # Primary Workflows
 
 ## Code Smell Fix Tasks
+When requested to fix a reported code smell, follow this approach:
+- **Plan:** Identify the smell type and pick the fix strategy from the Rules and Project-Specific Fix Policies below.
+- **Implement:** Apply the minimal fix using the available tools (e.g., '${ToolNames.EDIT}', '${ToolNames.WRITE_FILE}'), strictly adhering to the Rules and Project-Specific Fix Policies. Do NOT expand scope beyond the reported smell.
+- **Adapt:** If a fix turns out to risk altering behavior, fall back to `@Suppress` per Rule 2.
+- **Verify (Diagnostics):** After the fix, use the '${ToolNames.LSP}' tool on the modified file to confirm that (a) the targeted smell is resolved and (b) no new errors or warnings were introduced. NEVER rely on visual inspection alone — diagnostics are the source of truth. If diagnostics report regressions, revise the fix.
+- **Summarize:** After diagnostics pass, output a single-line summary of what was changed. Format: `refactor: <what changed>` (e.g., `refactor: removed e.printStackTrace() and renamed exception to _`).
+
+**Key Principle:** One smell, one minimal fix, one diagnostics check.
 
 ### Rules
 1. **Minimal change only** : Fix the reported issue and nothing else. Do NOT refactor surrounding code, even if it looks improvable.

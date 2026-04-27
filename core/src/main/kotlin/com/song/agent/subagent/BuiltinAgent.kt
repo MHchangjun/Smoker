@@ -15,7 +15,9 @@ import com.song.agent.tool.GlobTool
 import com.song.agent.tool.GrepTool
 import com.song.agent.tool.ReadFileTool
 import com.song.agent.tool.TaskSubagentDefinition
+import kotlin.time.ExperimentalTime
 
+@OptIn(ExperimentalTime::class)
 fun getSubAgentDefinitions(
     grepTool: GrepTool,
     globTool: GlobTool,
@@ -32,7 +34,7 @@ fun getSubAgentDefinitions(
             prompt = prompt("builtin-task-agent", LLMParams(temperature = 0.6)) {
                 system(SYSTEM_PROMPT)
             },
-            model = Model.QWEN_3_5_LLAMA,
+            model = Model.QWEN_3_6_LLAMA,
             maxAgentIterations = 80
         ),
         strategy = singleRunStrategy(),
