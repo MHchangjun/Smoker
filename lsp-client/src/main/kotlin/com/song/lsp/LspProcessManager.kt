@@ -17,12 +17,21 @@ class LspProcessManager(
     private var socket: Socket? = null
 
     val stderrLogFile: File = File(projectRoot.toFile(), ".gradle/lsp-stderr.log")
+    // kotlin-lsp's IntelliJ-Platform logger writes idea.log under <system-path>/log/.
+    // Pinning system-path lets us tail that log to see workspace import attempts.
+    val systemPath: File = File(projectRoot.toFile(), ".gradle/kotlin-lsp")
 
     fun start(): Pair<InputStream, OutputStream> {
         val actualPort = if (port == 0) findAvailablePort() else port
         stderrLogFile.parentFile?.mkdirs()
+        systemPath.mkdirs()
 
-        val builder = ProcessBuilder(serverCommand, "--socket", "127.0.0.1:$actualPort")
+        val builder = ProcessBuilder(
+            serverCommand,
+            "--socket", "127.0.0.1:$actualPort",
+            "--log-level", "DEBUG",
+            "--system-path", systemPath.absolutePath
+        )
             .directory(projectRoot.toFile())
             .redirectErrorStream(false)
             .redirectError(ProcessBuilder.Redirect.appendTo(stderrLogFile))

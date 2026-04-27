@@ -1,6 +1,5 @@
 package com.song.lsp
 
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.withTimeout
 import org.eclipse.lsp4j.*
@@ -12,7 +11,6 @@ import java.io.Closeable
 import java.io.File
 import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
-import java.util.concurrent.ConcurrentHashMap
 import java.util.logging.Logger
 import kotlin.io.path.walk
 import kotlin.time.Duration
@@ -27,10 +25,6 @@ class LspClient(
     private lateinit var server: LanguageServer
     private lateinit var launcher: Launcher<LanguageServer>
     private val fileTracker = LspFileTracker()
-
-    // Diagnostics cache (from publishDiagnostics notifications)
-    private val diagnosticsCache = ConcurrentHashMap<String, List<Diagnostic>>()
-    private val diagnosticsWaiters = ConcurrentHashMap<String, CompletableDeferred<List<Diagnostic>>>()
 
     @Volatile
     var initialized: Boolean = false
@@ -50,13 +44,18 @@ class LspClient(
         return CompletableFuture.completedFuture(null)
     }
 
-    override fun publishDiagnostics(diagnostics: PublishDiagnosticsParams?) {
-        diagnostics ?: return
-        val uri = diagnostics.uri
-        val diags = diagnostics.diagnostics
-        diagnosticsCache[uri] = diags
-        diagnosticsWaiters.remove(uri)?.complete(diags)
+    // kotlin-lsp is pull-only; this notification is never sent. Implemented as no-op
+    // to satisfy the LanguageClient interface contract.
+    override fun publishDiagnostics(diagnostics: PublishDiagnosticsParams?) {}
+
+    // kotlin-lsp does not emit $/progress notifications (verified against the kotlin-lsp
+    // source: no WorkDoneProgress emission anywhere). Implemented as no-ops to satisfy
+    // the LanguageClient interface contract.
+    override fun createProgress(params: WorkDoneProgressCreateParams): CompletableFuture<Void> {
+        return CompletableFuture.completedFuture(null)
     }
+
+    override fun notifyProgress(params: ProgressParams?) {}
 
     // --- Lifecycle ---
 
@@ -79,8 +78,6 @@ class LspClient(
         }
         processManager.stop()
         fileTracker.clear()
-        diagnosticsCache.clear()
-        diagnosticsWaiters.clear()
     }
 
     override fun close() {
@@ -173,154 +170,19 @@ class LspClient(
     }
 
     suspend fun diagnostics(filePath: String): List<Diagnostic> {
+        requireCapability("textDocument/diagnostic")
         ensureFileSync(filePath)
         val uri = fileUri(filePath)
-        // Try pull-model diagnostics first
-        return try {
-            val params = DocumentDiagnosticParams(TextDocumentIdentifier(uri))
-            val report = server.textDocumentService.diagnostic(params).await()
-            if (report.isRelatedFullDocumentDiagnosticReport) {
-                report.relatedFullDocumentDiagnosticReport?.items ?: emptyList()
-            } else {
-                diagnosticsCache[uri] ?: emptyList()
-            }
-        } catch (_: Exception) {
-            // Fallback to cached publishDiagnostics notifications
-            diagnosticsCache[uri] ?: emptyList()
+        val pullStart = System.currentTimeMillis()
+        val params = DocumentDiagnosticParams(TextDocumentIdentifier(uri))
+        val report = withTimeout(PULL_TIMEOUT) {
+            server.textDocumentService.diagnostic(params).await()
         }
-    }
-
-    suspend fun openFileForDiagnostics(filePath: String) {
-        ensureFileSync(filePath)
-    }
-
-    suspend fun openAndAwaitDiagnostics(filePath: String, timeout: Duration = 30.seconds): List<Diagnostic> {
-        ensureFileSync(filePath)
-        val uri = fileUri(filePath)
-        // Already cached?
-        diagnosticsCache[uri]?.let { if (it.isNotEmpty()) return it }
-
-        val waiter = CompletableDeferred<List<Diagnostic>>()
-        diagnosticsWaiters[uri] = waiter
-        return try {
-            withTimeout(timeout) { waiter.await() }
-        } catch (_: Exception) {
-            diagnosticsCache[uri] ?: emptyList()
-        } finally {
-            diagnosticsWaiters.remove(uri)
-        }
-    }
-
-    fun getAllCachedDiagnostics(): Map<String, List<Diagnostic>> = diagnosticsCache.toMap()
-
-    fun getCachedDiagnostics(uri: String): List<Diagnostic> = diagnosticsCache[uri] ?: emptyList()
-
-    fun clearDiagnosticsCache() {
-        diagnosticsCache.clear()
-    }
-
-    suspend fun codeActions(
-        filePath: String,
-        startLine: Int,
-        startCharacter: Int,
-        endLine: Int,
-        endCharacter: Int,
-        diagnostics: List<Diagnostic> = emptyList(),
-        codeActionKinds: List<String>? = null
-    ): List<CodeAction> {
-        requireCapability("textDocument/codeAction")
-        ensureFileSync(filePath)
-        val context = CodeActionContext(diagnostics).apply {
-            if (codeActionKinds != null) only = codeActionKinds
-        }
-        val params = CodeActionParams(
-            TextDocumentIdentifier(fileUri(filePath)),
-            Range(
-                Position(startLine - 1, startCharacter - 1),
-                Position(endLine - 1, endCharacter - 1)
-            ),
-            context
-        )
-        val result = server.textDocumentService.codeAction(params).await() ?: return emptyList()
-        return result.mapNotNull { either ->
-            if (either.isRight) either.right else null
-        }
-    }
-
-    /**
-     * 특정 diagnostic에 대한 QuickFix code action을 가져온다.
-     */
-    suspend fun getQuickFixes(filePath: String, diagnostic: Diagnostic): List<CodeAction> {
-        requireCapability("textDocument/codeAction")
-        ensureFileSync(filePath)
-        val params = CodeActionParams(
-            TextDocumentIdentifier(fileUri(filePath)),
-            diagnostic.range,
-            CodeActionContext(listOf(diagnostic), listOf(CodeActionKind.QuickFix))
-        )
-        val result = server.textDocumentService.codeAction(params).await() ?: return emptyList()
-        return result.mapNotNull { either ->
-            if (either.isRight) either.right else null
-        }
-    }
-
-    /**
-     * CodeAction을 적용한다.
-     * 1) WorkspaceEdit가 있으면 파일에 직접 적용
-     * 2) Command가 있으면 서버에서 실행
-     */
-    suspend fun applyAction(action: CodeAction) {
-        action.edit?.let { applyWorkspaceEdit(it) }
-        action.command?.let { cmd ->
-            server.workspaceService.executeCommand(
-                ExecuteCommandParams(cmd.command, cmd.arguments)
-            ).await()
-        }
-    }
-
-    private fun applyWorkspaceEdit(edit: WorkspaceEdit) {
-        val changes = edit.changes ?: return
-        for ((uri, edits) in changes) {
-            val path = uriToPath(uri)
-            val file = File(path)
-            if (!file.exists()) continue
-
-            val lines = file.readText().lines().toMutableList()
-            // 아래에서 위로 적용하여 offset 보존
-            val sorted = edits.sortedByDescending { it.range.start.line }
-            for (textEdit in sorted) {
-                applyTextEdit(lines, textEdit)
-            }
-            file.writeText(lines.joinToString("\n"))
-        }
-    }
-
-    private fun applyTextEdit(lines: MutableList<String>, edit: TextEdit) {
-        val startLine = edit.range.start.line
-        val startChar = edit.range.start.character
-        val endLine = edit.range.end.line
-        val endChar = edit.range.end.character
-
-        if (startLine >= lines.size) return
-
-        val prefix = if (startChar <= lines[startLine].length) {
-            lines[startLine].substring(0, startChar)
-        } else lines[startLine]
-
-        val suffix = if (endLine < lines.size && endChar <= lines[endLine].length) {
-            lines[endLine].substring(endChar)
-        } else ""
-
-        val removeCount = (endLine - startLine + 1).coerceAtMost(lines.size - startLine)
-        repeat(removeCount) {
-            if (startLine < lines.size) lines.removeAt(startLine)
-        }
-
-        val newContent = prefix + edit.newText + suffix
-        val newLines = newContent.split("\n")
-        newLines.reversed().forEach { line ->
-            lines.add(startLine, line)
-        }
+        val items = if (report.isRelatedFullDocumentDiagnosticReport) {
+            report.relatedFullDocumentDiagnosticReport?.items ?: emptyList()
+        } else emptyList()
+        log.fine("LSP pull diagnostics [$uri] returned ${items.size} in ${System.currentTimeMillis() - pullStart}ms")
+        return items
     }
 
     // --- File Sync ---
@@ -335,16 +197,19 @@ class LspClient(
                     TextDocumentItem(uri, "kotlin", 1, content)
                 )
             )
-            fileTracker.markOpened(uri)
-        } else {
-            val version = fileTracker.incrementVersion(uri)
-            server.textDocumentService.didChange(
-                DidChangeTextDocumentParams(
-                    VersionedTextDocumentIdentifier(uri, version),
-                    listOf(TextDocumentContentChangeEvent(content))
-                )
-            )
+            fileTracker.markOpened(uri, content)
+            return
         }
+
+        if (!fileTracker.hasChanged(uri, content)) return
+
+        val version = fileTracker.incrementVersion(uri, content)
+        server.textDocumentService.didChange(
+            DidChangeTextDocumentParams(
+                VersionedTextDocumentIdentifier(uri, version),
+                listOf(TextDocumentContentChangeEvent(content))
+            )
+        )
     }
 
     // --- Initialize ---
@@ -359,12 +224,37 @@ class LspClient(
                 codeAction = CodeActionCapabilities().apply {
                     dynamicRegistration = false
                 }
+                // kotlin-lsp uses pull-based diagnostics — must be advertised so the
+                // server enables the textDocument/diagnostic endpoint.
+                diagnostic = DiagnosticCapabilities().apply {
+                    dynamicRegistration = false
+                    relatedDocumentSupport = false
+                }
+            }
+            // kotlin-lsp gates `$/progress` notifications on this capability — without it
+            // the server skips workDoneProgress entirely (matches what we see in the
+            // trace: "did not emit workDoneProgress").
+            window = WindowClientCapabilities().apply {
+                workDoneProgress = true
             }
         }
+        val rootUriStr = fileUri(projectRoot.toAbsolutePath().normalize().toString())
         val params = InitializeParams().apply {
             processId = ProcessHandle.current().pid().toInt()
-            rootUri = fileUri(projectRoot.toAbsolutePath().normalize().toString())
+            rootUri = rootUriStr
             this.capabilities = capabilities
+            workspaceFolders = listOf(
+                WorkspaceFolder(rootUriStr, projectRoot.fileName?.toString().orEmpty())
+            )
+            // kotlin-lsp 's closed-source initialize handler reads `buildTools` from
+            // initializationOptions to pick a workspace importer (Gradle/Maven). Without
+            // this payload the server skips workspace import — modules and source roots
+            // never get attached, so ProblemHighlightFilter blocks the K2/FIR compiler
+            // diagnostics provider and only PSI-only inspections come back.
+            // Format mirrors kotlin-vscode/src/lspClient.ts:294.
+            initializationOptions = mapOf(
+                "buildTools" to mapOf(rootUriStr to "gradle")
+            )
         }
 
         val result = withTimeout(5.minutes) {
@@ -372,7 +262,8 @@ class LspClient(
         }
         serverCapabilities = result.capabilities
         log.info("LSP server capabilities: definition=${result.capabilities.definitionProvider != null}, " +
-            "hover=${result.capabilities.hoverProvider != null}")
+            "hover=${result.capabilities.hoverProvider != null}, " +
+            "diagnostic=${result.capabilities.diagnosticProvider != null}")
 
         server.initialized(InitializedParams())
         initialized = true
@@ -423,8 +314,9 @@ class LspClient(
                     log.warning("LSP verify: goToDefinition failed — semantic analysis may be limited: ${e.message}")
                 }
             }
-
-            log.info("LSP verify: OK")
+            // kotlin-lsp's `initialize` blocks until Gradle/Maven import + workspace model
+            // load is complete, so by the time verify() runs the project is already ready
+            // for diagnostic queries. No additional warmup needed.
         } catch (e: Exception) {
             log.warning("LSP verify failed: ${e.message}")
             initialized = false
@@ -481,6 +373,8 @@ class LspClient(
     }
 
     companion object {
+        private val PULL_TIMEOUT: Duration = 30.seconds
+
         fun fileUri(path: String): String {
             val normalized = if (path.startsWith("/")) path else "/$path"
             return "file://$normalized"
