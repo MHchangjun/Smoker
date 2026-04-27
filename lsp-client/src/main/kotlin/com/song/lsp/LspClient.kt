@@ -5,12 +5,15 @@ import kotlinx.serialization.json.*
 import java.io.Closeable
 import java.io.File
 import java.nio.file.Path
+import java.util.logging.Logger
+import kotlin.io.path.walk
 import kotlin.time.Duration.Companion.minutes
 
 class LspClient(
     private val processManager: LspProcessManager,
     private val projectRoot: Path
 ) : Closeable {
+    private val log = Logger.getLogger(LspClient::class.java.simpleName)
     private lateinit var transport: JsonRpcTransport
     private val fileTracker = LspFileTracker()
     private val json = Json { ignoreUnknownKeys = true }
@@ -280,6 +283,40 @@ class LspClient(
         transport.request("initialize", params, timeout = 5.minutes)
         transport.notify("initialized", JsonObject(emptyMap()))
         initialized = true
+        verify()
+    }
+
+    private suspend fun verify() {
+        val testFile = projectRoot.walk()
+            .firstOrNull { it.toString().endsWith(".kt") }
+            ?: run {
+                log.warning("LSP verify: no .kt file found in project")
+                initialized = false
+                return
+            }
+
+        try {
+            val uri = fileUri(testFile.toAbsolutePath().normalize().toString())
+            val content = testFile.toFile().readText()
+            val openParams = json.encodeToJsonElement(
+                DidOpenTextDocumentParams(
+                    textDocument = TextDocumentItem(
+                        uri = uri, languageId = "kotlin", version = 1, text = content
+                    )
+                )
+            )
+            transport.notify("textDocument/didOpen", openParams)
+            fileTracker.markOpened(uri)
+
+            val symbolParams = json.encodeToJsonElement(
+                DocumentSymbolParams(textDocument = TextDocumentIdentifier(uri = uri))
+            )
+            transport.request("textDocument/documentSymbol", symbolParams)
+            log.info("LSP verify: OK")
+        } catch (e: Exception) {
+            log.warning("LSP verify failed: ${e.message}")
+            initialized = false
+        }
     }
 
     // --- Helpers ---

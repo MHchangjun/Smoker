@@ -12,6 +12,7 @@ repositories {
 }
 
 dependencies {
+    implementation(project(":lsp-client"))
     implementation("ai.koog:koog-agents:0.8.0-SNAPSHOT")
     implementation("io.insert-koin:koin-core:4.0.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")

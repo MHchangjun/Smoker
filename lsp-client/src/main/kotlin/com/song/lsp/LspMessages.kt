@@ -200,8 +200,7 @@ data class CallHierarchyItem(
     val detail: String? = null,
     val uri: String,
     val range: Range,
-    val selectionRange: Range,
-    val data: JsonElement? = null
+    val selectionRange: Range
 )
 
 @Serializable

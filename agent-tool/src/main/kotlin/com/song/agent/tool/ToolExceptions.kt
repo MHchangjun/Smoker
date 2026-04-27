@@ -5,6 +5,7 @@ package com.song.agent.tool
  *
  * Koog will surface this exception as a failed tool call to the LLM.
  */
+@Deprecated("")
 class ToolExecutionException(
     message: String,
     cause: Throwable? = null

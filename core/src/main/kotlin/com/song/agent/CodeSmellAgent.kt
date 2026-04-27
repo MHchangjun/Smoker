@@ -19,7 +19,8 @@ class CodeSmellAgent(
     private val shellTool: ShellTool,
     private val editTool: EditTool,
     private val readFileTool: ReadFileTool,
-    private val writeFileTool: WriteFileTool
+    private val writeFileTool: WriteFileTool,
+    private val lspTool: LspTool
 ) {
     suspend fun start(userPrompt: String): String {
         val agentService = buildAgentService()
@@ -57,7 +58,7 @@ class CodeSmellAgent(
                     }
 
                     onToolCallCompleted { ctx ->
-                        log("ToolCallResult", ctx.toolName, "complete")
+                        log("ToolCallResult", ctx.toolName, "args=${ctx.toolResult.toString()}")
                     }
 
                     onLLMCallCompleted { ctx ->
@@ -80,6 +81,7 @@ class CodeSmellAgent(
                 tool(shellTool)
                 tool(readFileTool)
                 tool(writeFileTool)
+                tool(lspTool)
             }
         )
     }
@@ -95,7 +97,7 @@ You are a refactoring agent running in a CLI environment.
 
 # Core Mandates
 
-- **Conventions:** Rigorously adhere to existing project conventions when reading or modifying code. Analyze surrounding code, tests, and configuration first.
+- **Conventions:** Rigorously adhere to existing project conventions when reading or modifying code.
 - **Libraries/Frameworks:** NEVER assume a library/framework is available or appropriate. Verify its established usage within the project (check imports, configuration files like 'package.json', 'Cargo.toml', 'requirements.txt', 'build.gradle', etc., or observe neighboring files) before employing it.
 - **Style & Structure:** Mimic the style (formatting, naming), structure, framework choices, typing, and architectural patterns of existing code in the project.
 - **Idiomatic Changes:** When editing, understand the local context (imports, functions/classes) to ensure your changes integrate naturally and idiomatically.
