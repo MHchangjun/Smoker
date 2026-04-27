@@ -2,13 +2,15 @@ package com.song.agent.tool
 
 import ai.koog.agents.core.tools.Tool
 import ai.koog.agents.core.tools.annotations.LLMDescription
+import com.song.lsp.LspClient
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.serializer
 import java.io.File
 
 class EditTool(
-    private val config: Config = Config()
+    private val lspClient: LspClient,
+    private val config: Config = Config(),
 ) : Tool<EditTool.Args, String>(
     argsSerializer = Args.serializer(),
     resultSerializer = String.serializer(),
@@ -109,6 +111,7 @@ Expectation for required parameters:
                 append("\n\n---\n\n")
                 append(snippet)
             }
+            append(runPostEditDiagnostics(target.absolutePath, lspClient))
         }
 
         return llmContent

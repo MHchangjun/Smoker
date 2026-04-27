@@ -12,7 +12,7 @@ fun toolModule(root: Path): Module = module {
     single { GrepTool(GrepTool.Config(workDir = root.toFile())) }
     single { GlobTool(GlobTool.Config(workDir = root.toFile())) }
     single { ReadFileTool(ReadFileTool.Config(workDir = root.toFile())) }
-    single { WriteFileTool(WriteFileTool.Config(workDir = root.toFile(), lspClient = get<LspClient>())) }
-    single { EditTool(EditTool.Config(workDir = root.toFile(), lspClient = get<LspClient>())) }
+    single { WriteFileTool(get<LspClient>(), WriteFileTool.Config(workDir = root.toFile())) }
+    single { EditTool(get<LspClient>(), EditTool.Config(workDir = root.toFile())) }
     single { LspTool(get<LspClient>()) }
 }

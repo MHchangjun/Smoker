@@ -2,11 +2,13 @@ package com.song.agent.tool
 
 import ai.koog.agents.core.tools.Tool
 import ai.koog.agents.core.tools.annotations.LLMDescription
+import com.song.lsp.LspClient
 import kotlinx.serialization.Serializable
 import java.io.File
 
 class WriteFileTool(
-    private val config: Config = Config()
+    private val lspClient: LspClient,
+    private val config: Config = Config(),
 ) : Tool<WriteFileTool.Args, WriteFileTool.Result>(
     argsSerializer = Args.serializer(),
     resultSerializer = Result.serializer(),
@@ -41,6 +43,7 @@ class WriteFileTool(
         val bytes_written: Int,
         val file_existed: Boolean,
         val content: String,
+        val diagnostics: String? = null,
     )
 
     override suspend fun execute(args: Args): Result {
@@ -75,11 +78,15 @@ class WriteFileTool(
             throw ToolExecutionException("Error writing ${args.path}: ${e.message}", e)
         }
 
+        val diagnostics = runPostEditDiagnostics(resolved.absolutePath, lspClient)
+            .takeIf { it.isNotEmpty() }
+
         return Result(
             path = args.path,
             bytes_written = contentBytes,
             file_existed = fileExisted,
             content = args.content,
+            diagnostics = diagnostics,
         )
     }
 
