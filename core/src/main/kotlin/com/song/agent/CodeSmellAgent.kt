@@ -22,7 +22,6 @@ class CodeSmellAgent(
     private val writeFileTool: WriteFileTool,
     private val grepTool: GrepTool,
     private val globTool: GlobTool,
-    private val lspTool: LspTool
 ) {
     suspend fun start(userPrompt: String): String {
         val agentService = buildAgentService()
@@ -30,10 +29,11 @@ class CodeSmellAgent(
     }
 
     private fun buildAgentService(): AIAgentService<String, String, *> {
+        val endpoint = System.getenv("SMOKER_LLM_ENDPOINT") ?: "http://100.99.171.25:8080"
         val executor = MultiLLMPromptExecutor(
             OpenAILLMClient(
                 "",
-                OpenAIClientSettings("http://100.99.171.25:8080")
+                OpenAIClientSettings(endpoint)
             )
         )
         return AIAgentService(
@@ -85,7 +85,6 @@ class CodeSmellAgent(
                 tool(writeFileTool)
                 tool(grepTool)
                 tool(globTool)
-                tool(lspTool)
             }
         )
     }

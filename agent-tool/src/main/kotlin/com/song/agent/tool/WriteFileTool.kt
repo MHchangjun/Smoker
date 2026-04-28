@@ -2,12 +2,17 @@ package com.song.agent.tool
 
 import ai.koog.agents.core.tools.Tool
 import ai.koog.agents.core.tools.annotations.LLMDescription
-import com.song.lsp.LspClient
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.WriteAction
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.VirtualFile
+import com.song.agent.tool.diagnostics.runPostEditDiagnostics
 import kotlinx.serialization.Serializable
 import java.io.File
 
 class WriteFileTool(
-    private val lspClient: LspClient,
+    private val project: Project,
     private val config: Config = Config(),
 ) : Tool<WriteFileTool.Args, WriteFileTool.Result>(
     argsSerializer = Args.serializer(),
@@ -72,14 +77,14 @@ class WriteFileTool(
             }
         }
 
-        try {
-            resolved.writeText(args.content, Charsets.UTF_8)
-        } catch (e: Exception) {
-            throw ToolExecutionException("Error writing ${args.path}: ${e.message}", e)
+        val writeResult = applyWrite(resolved, args.content, fileExisted)
+        if (writeResult.error != null) {
+            throw ToolExecutionException("Error writing ${args.path}: ${writeResult.error}")
         }
 
-        val diagnostics = runPostEditDiagnostics(resolved.absolutePath, lspClient)
-            .takeIf { it.isNotEmpty() }
+        val diagnostics = writeResult.vFile
+            ?.let { runPostEditDiagnostics(project, it) }
+            ?.takeIf { it.isNotEmpty() }
 
         return Result(
             path = args.path,
@@ -88,6 +93,34 @@ class WriteFileTool(
             content = args.content,
             diagnostics = diagnostics,
         )
+    }
+
+    private data class WriteResult(val vFile: VirtualFile? = null, val error: String? = null)
+
+    // Same Option A pattern as EditTool: disk write on background, VFS refresh
+    // on EDT inside WriteAction.
+    private fun applyWrite(target: File, content: String, fileExisted: Boolean): WriteResult {
+        try {
+            target.parentFile?.takeIf { !it.exists() }?.mkdirs()
+            target.writeText(content, Charsets.UTF_8)
+        } catch (e: Throwable) {
+            return WriteResult(error = "Disk write failed for ${target.absolutePath}: ${e.message}")
+        }
+
+        var vFile: VirtualFile? = null
+        var refreshError: String? = null
+        ApplicationManager.getApplication().invokeAndWait {
+            try {
+                WriteAction.run<Throwable> {
+                    val refreshed = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(target)
+                    refreshed?.refresh(false, false)
+                    vFile = refreshed
+                }
+            } catch (e: Throwable) {
+                refreshError = "VFS refresh failed for ${target.absolutePath}: ${e.message}"
+            }
+        }
+        return WriteResult(vFile = vFile, error = refreshError)
     }
 
     private fun validateInputs(args: Args) {

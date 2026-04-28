@@ -3,7 +3,6 @@ package com.song.detekt
 import com.song.agent.CodeSmellAgent
 import com.song.git.CommitOutcome
 import com.song.git.GitCli
-import com.song.lsp.LspClient
 import kotlinx.coroutines.runBlocking
 import java.io.File
 
@@ -36,7 +35,6 @@ class DetektFixService(
     private val gitCli: GitCli,
     private val agent: CodeSmellAgent,
     private val scanService: DetektScanService,
-    private val lspClient: LspClient
 ) {
     fun fixAll(
         detektConfig: DetektConfigContext?,
@@ -50,44 +48,30 @@ class DetektFixService(
 
         val outcomes = mutableListOf<CommitOutcome>()
         runBlocking {
-            try {
-                lspClient.start()
-            } catch (e: Exception) {
-                println("LSP client failed to start: ${e.message}. Continuing without LSP.")
-            }
-
-            try {
-                for (iteration in 0 until MAX_ITERATIONS) {
-                    val scan = scanService.scan(context)
-                    val localFindings = scan.findings
-                        .filter { !it.absolutePath.isNullOrBlank() }
-                        .filter { isLocalRule(it.ruleId) }
-                        .groupBy { it.absolutePath!! }
-                        .mapNotNull { (path, fileFindings) ->
-                            val first = fileFindings.firstOrNull() ?: return@mapNotNull null
-                            path to first
-                        }
-
-                    if (localFindings.isEmpty()) {
-                        println("No more local findings. Stopping after $iteration iterations.")
-                        break
+            for (iteration in 0 until MAX_ITERATIONS) {
+                val scan = scanService.scan(context)
+                val localFindings = scan.findings
+                    .filter { !it.absolutePath.isNullOrBlank() }
+                    .filter { isLocalRule(it.ruleId) }
+                    .groupBy { it.absolutePath!! }
+                    .mapNotNull { (path, fileFindings) ->
+                        val first = fileFindings.firstOrNull() ?: return@mapNotNull null
+                        path to first
                     }
 
-                    for ((path, finding) in localFindings) {
-                        val before = gitCli.captureDirtyFingerprints(projectRoot)
-                        val base = promptBuilder.build(path, listOf(finding))
-                        val rawMessage = agent.start(base)
-                        val outcome = commitService.commitAgentChanges(projectRoot, before, rawMessage)
-                        if (outcome.committed) {
-                            outcomes += outcome
-                        }
-                    }
+                if (localFindings.isEmpty()) {
+                    println("No more local findings. Stopping after $iteration iterations.")
+                    break
                 }
-            } finally {
-                try {
-                    lspClient.stop()
-                } catch (e: Exception) {
-                    println("LSP client failed to stop: ${e.message}")
+
+                for ((path, finding) in localFindings) {
+                    val before = gitCli.captureDirtyFingerprints(projectRoot)
+                    val base = promptBuilder.build(path, listOf(finding))
+                    val rawMessage = agent.start(base)
+                    val outcome = commitService.commitAgentChanges(projectRoot, before, rawMessage)
+                    if (outcome.committed) {
+                        outcomes += outcome
+                    }
                 }
             }
         }

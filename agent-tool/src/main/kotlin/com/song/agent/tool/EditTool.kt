@@ -2,14 +2,22 @@ package com.song.agent.tool
 
 import ai.koog.agents.core.tools.Tool
 import ai.koog.agents.core.tools.annotations.LLMDescription
-import com.song.lsp.LspClient
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.editor.Document
+import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.psi.PsiDocumentManager
+import com.song.agent.tool.diagnostics.runPostEditDiagnostics
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.serializer
 import java.io.File
 
 class EditTool(
-    private val lspClient: LspClient,
+    private val project: Project,
     private val config: Config = Config(),
 ) : Tool<EditTool.Args, String>(
     argsSerializer = Args.serializer(),
@@ -68,11 +76,8 @@ Expectation for required parameters:
             return "Not a file: ${args.filePath}"
         }
 
-        val currentContent = if (fileExists) {
-            target.readText(Charsets.UTF_8).normalizeLineEndings()
-        } else {
-            null
-        }
+        val existingState = if (fileExists) loadExistingFileState(target) else null
+        val currentContent = existingState?.content
 
         val normalizedOld = args.oldString.normalizeLineEndings()
         val normalizedNew = args.newString.normalizeLineEndings()
@@ -94,11 +99,10 @@ Expectation for required parameters:
             return "Failed to create parent directory: ${parent.path}"
         }
 
-        try {
-            target.writeText(editPlan.newContent, Charsets.UTF_8)
-        } catch (e: Exception) {
-            return "Error writing ${args.filePath}: ${e.message}"
-        }
+        val writeResult = applyWrite(target, editPlan.newContent, existingState)
+        if (writeResult.error != null) return writeResult.error
+
+        val finalVFile = writeResult.vFile
 
         val snippet = extractSnippet(currentContent, editPlan.newContent)
         val llmContent = buildString {
@@ -111,10 +115,100 @@ Expectation for required parameters:
                 append("\n\n---\n\n")
                 append(snippet)
             }
-            append(runPostEditDiagnostics(target.absolutePath, lspClient))
+            if (finalVFile != null) {
+                append(runPostEditDiagnostics(project, finalVFile))
+            }
         }
 
         return llmContent
+    }
+
+    // Plain disk read — agent is the only writer, so the on-disk file is
+    // authoritative. Avoids touching IntelliJ's threaded model from a background
+    // coroutine.
+    private fun readCurrentContent(target: File): String {
+        return target.readText(Charsets.UTF_8).replace("\r\n", "\n")
+    }
+
+    private data class ExistingFileState(
+        val content: String,
+        val vFile: VirtualFile?,
+        val document: Document?,
+    )
+
+    private data class WriteResult(val vFile: VirtualFile? = null, val error: String? = null)
+
+    private fun loadExistingFileState(target: File): ExistingFileState {
+        val vFile = resolveVirtualFile(target)
+        val document = vFile?.let { loadDocument(it) }
+        val content = document?.text?.replace("\r\n", "\n") ?: readCurrentContent(target)
+        return ExistingFileState(content = content, vFile = vFile, document = document)
+    }
+
+    private fun applyWrite(target: File, newContent: String, existingState: ExistingFileState?): WriteResult {
+        if (existingState?.vFile != null && existingState.document != null) {
+            return applyDocumentWrite(existingState, newContent)
+        }
+        return applyDiskWrite(target, newContent)
+    }
+
+    private fun applyDocumentWrite(existingState: ExistingFileState, newContent: String): WriteResult {
+        val document = requireNotNull(existingState.document)
+        val vFile = requireNotNull(existingState.vFile)
+        var writeError: String? = null
+        ApplicationManager.getApplication().invokeAndWait {
+            try {
+                WriteCommandAction.runWriteCommandAction(project) {
+                    document.replaceString(0, document.textLength, newContent)
+                }
+                PsiDocumentManager.getInstance(project).commitDocument(document)
+                FileDocumentManager.getInstance().saveDocument(document)
+            } catch (e: Throwable) {
+                writeError = "Document write failed for ${vFile.path}: ${e.message}"
+            }
+        }
+        return WriteResult(vFile = vFile, error = writeError)
+    }
+
+    // Disk fallback for files that do not have an editable IntelliJ document yet
+    // (for example brand-new files created through an empty old_string).
+    private fun applyDiskWrite(target: File, newContent: String): WriteResult {
+        try {
+            target.parentFile?.takeIf { !it.exists() }?.mkdirs()
+            target.writeText(newContent, Charsets.UTF_8)
+        } catch (e: Throwable) {
+            return WriteResult(error = "Disk write failed for ${target.absolutePath}: ${e.message}")
+        }
+
+        var vFile: VirtualFile? = null
+        var refreshError: String? = null
+        ApplicationManager.getApplication().invokeAndWait {
+            try {
+                val refreshed = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(target)
+                refreshed?.refresh(false, false)
+                vFile = refreshed
+            } catch (e: Throwable) {
+                refreshError = "VFS refresh failed for ${target.absolutePath}: ${e.message}"
+            }
+        }
+        return WriteResult(vFile = vFile, error = refreshError)
+    }
+
+    private fun resolveVirtualFile(target: File): VirtualFile? {
+        var vFile: VirtualFile? = null
+        ApplicationManager.getApplication().invokeAndWait {
+            val localFileSystem = LocalFileSystem.getInstance()
+            vFile = localFileSystem.findFileByIoFile(target) ?: localFileSystem.refreshAndFindFileByIoFile(target)
+        }
+        return vFile
+    }
+
+    private fun loadDocument(vFile: VirtualFile): Document? {
+        var document: Document? = null
+        ApplicationManager.getApplication().invokeAndWait {
+            document = FileDocumentManager.getInstance().getDocument(vFile)
+        }
+        return document
     }
 
     private data class EditPlan(

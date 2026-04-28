@@ -1,8 +1,7 @@
 package com.song.agent.tool.di
 
-import aws.smithy.kotlin.runtime.retries.delay.InfiniteTokenBucket.config
+import com.intellij.openapi.project.Project
 import com.song.agent.tool.*
-import com.song.lsp.LspClient
 import org.koin.core.module.Module
 import org.koin.dsl.module
 import java.nio.file.Path
@@ -12,7 +11,6 @@ fun toolModule(root: Path): Module = module {
     single { GrepTool(GrepTool.Config(workDir = root.toFile())) }
     single { GlobTool(GlobTool.Config(workDir = root.toFile())) }
     single { ReadFileTool(ReadFileTool.Config(workDir = root.toFile())) }
-    single { WriteFileTool(get<LspClient>(), WriteFileTool.Config(workDir = root.toFile())) }
-    single { EditTool(get<LspClient>(), EditTool.Config(workDir = root.toFile())) }
-    single { LspTool(get<LspClient>()) }
+    single { WriteFileTool(get<Project>(), WriteFileTool.Config(workDir = root.toFile())) }
+    single { EditTool(get<Project>(), EditTool.Config(workDir = root.toFile())) }
 }

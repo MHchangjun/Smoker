@@ -1,25 +1,27 @@
 package com.song.di
 
+import com.intellij.openapi.project.Project
 import com.song.agent.CodeSmellAgent
 import com.song.agent.tool.di.toolModule
 import com.song.git.GitCli
 import com.song.git.PullRequestPublishService
 import com.song.git.RepositorySyncService
-import com.song.lsp.LspClient
-import com.song.lsp.LspProcessManager
 import org.koin.core.module.Module
 import org.koin.dsl.module
 import java.nio.file.Path
 
-fun coreModule(root: Path): Module = module {
+fun coreModule(root: Path, project: Project): Module = module {
     includes(toolModule(root))
 
     single { root }
+    single { project }
 
-    single { LspProcessManager(projectRoot = root) }
-    single { LspClient(get(), root) }
-
-    single { CodeSmellAgent(root.toAbsolutePath().normalize().toString(), get(), get(), get(), get(), get(), get(), get()) }
+    single {
+        CodeSmellAgent(
+            root.toAbsolutePath().normalize().toString(),
+            get(), get(), get(), get(), get(), get(),
+        )
+    }
 
     single { GitCli() }
     single { RepositorySyncService(get()) }
