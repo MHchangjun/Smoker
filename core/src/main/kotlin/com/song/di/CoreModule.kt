@@ -2,6 +2,7 @@ package com.song.di
 
 import com.intellij.openapi.project.Project
 import com.song.agent.CodeSmellAgent
+import com.song.agent.EditorSessionManager
 import com.song.agent.tool.di.toolModule
 import com.song.git.GitCli
 import com.song.git.PullRequestPublishService
@@ -15,6 +16,7 @@ fun coreModule(root: Path, project: Project): Module = module {
 
     single { root }
     single { project }
+    single { EditorSessionManager(get()) }
 
     single {
         CodeSmellAgent(

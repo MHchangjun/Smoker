@@ -1,34 +1,47 @@
 package com.song.agent.tool.diagnostics
 
+import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
+import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer.DaemonListener
 import com.intellij.codeInsight.daemon.impl.DaemonCodeAnalyzerEx
-import com.intellij.codeInsight.daemon.impl.DaemonProgressIndicator
 import com.intellij.codeInsight.daemon.impl.HighlightInfo
-import com.intellij.codeInsight.daemon.impl.HighlightingSessionImpl
-import com.intellij.codeInsight.multiverse.CodeInsightContextManager
+import com.intellij.openapi.fileEditor.FileEditor
+import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.fileEditor.TextEditor
 import com.intellij.lang.annotation.HighlightSeverity
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.editor.Document
-import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.fileEditor.FileDocumentManager
-import com.intellij.openapi.progress.ProgressManager
-import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.DumbService
-import com.intellij.openapi.util.Computable
-import com.intellij.openapi.util.ProperTextRange
+import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiManager
+import kotlinx.coroutines.CompletableDeferred
+import kotlin.time.Duration.Companion.seconds
+import java.util.concurrent.atomic.AtomicBoolean
 
 private const val MAX_DIAGNOSTICS_REPORTED = 20
-private val MIN_REPORTED_SEVERITY = HighlightSeverity.WEAK_WARNING
+private val DIAGNOSTICS_TIMEOUT = 30.seconds
+private val MIN_REPORTED_SEVERITY = HighlightSeverity.ERROR
+private val IGNORED_INSPECTION_IDS = setOf(
+    "FunctionName",
+    "PackageDirectoryMismatch",
+)
 
-// Run daemon passes synchronously against the current PSI/document pair so the
-// tool can return the same class of issues the editor shows without waiting for
-// background daemon polling.
-internal fun runPostEditDiagnostics(project: Project, vFile: VirtualFile): String {
+internal suspend fun runPostEditDiagnostics(
+    project: Project,
+    vFile: VirtualFile,
+    focusLineRange: IntRange? = null,
+): String {
     if (project.isDisposed) return ""
-    DumbService.getInstance(project).waitForSmartMode()
+    println("[smoker-diag] start file=${vFile.path} focusLineRange=$focusLineRange")
+
+    val dumbService = DumbService.getInstance(project)
+    if (dumbService.isDumb) {
+        println("[smoker-diag] project is dumb; waiting for smart mode")
+        dumbService.waitForSmartMode()
+    }
 
     reloadEditorDocumentFromDisk(vFile)
 
@@ -37,56 +50,178 @@ internal fun runPostEditDiagnostics(project: Project, vFile: VirtualFile): Strin
         val document = FileDocumentManager.getInstance().getDocument(vFile) ?: return@compute null
         DiagnosticsContext(psiFile, document)
     } ?: return "\n\n[diagnostics] unavailable"
+    println("[smoker-diag] context ready psi=${ctx.psiFile.virtualFile.path} textLength=${ctx.document.textLength}")
 
-    val daemon = DaemonCodeAnalyzerEx.getInstanceEx(project)
-
-    // Commit the edited document before running the main highlighting passes.
-    ApplicationManager.getApplication().invokeAndWait {
-        PsiDocumentManager.getInstance(project).commitDocument(ctx.document)
-    }
-
-    val issues = try {
-        val indicator = DaemonProgressIndicator()
-        indicator.start()
-        try {
-            ProgressManager.getInstance().runProcess(
-                Computable {
-                    val codeInsightContext = ReadAction.compute<com.intellij.codeInsight.multiverse.CodeInsightContext, Throwable> {
-                        CodeInsightContextManager.getInstance(project).getCodeInsightContext(ctx.psiFile.viewProvider)
-                    }
-                    val visibleRange = ProperTextRange.create(0, ctx.document.textLength)
-                    val colorScheme = EditorColorsManager.getInstance().globalScheme
-                    var collected = emptyList<HighlightInfo>()
-                    HighlightingSessionImpl.runInsideHighlightingSession(
-                        ctx.psiFile,
-                        codeInsightContext,
-                        colorScheme,
-                        visibleRange,
-                        false,
-                    ) {
-                        collected = ReadAction.compute<List<HighlightInfo>, Throwable> {
-                            daemon.runMainPasses(ctx.psiFile, ctx.document, indicator)
-                                .asSequence()
-                                .filter { it.severity >= MIN_REPORTED_SEVERITY }
-                                .distinctBy { listOf(it.startOffset, it.endOffset, it.severity.name, it.description.orEmpty()) }
-                                .sortedWith(compareBy<HighlightInfo> { it.startOffset }.thenByDescending { it.severity.myVal })
-                                .toList()
-                        }
-                    }
-                    collected
-                },
-                indicator
-            )
-        } finally {
-            indicator.stop()
-        }
-    } catch (e: Throwable) {
-        return "\n\n[diagnostics] failed: ${e.message.orEmpty()}"
-    }
+    val issues = waitForFreshDiagnostics(project, ctx, focusLineRange)
+    println("[smoker-diag] collected issues=${issues.size}")
 
     return ReadAction.compute<String, Throwable> {
         formatDiagnosticsSummary(ctx.document, issues)
     }
+}
+
+private suspend fun waitForFreshDiagnostics(
+    project: Project,
+    ctx: DiagnosticsContext,
+    focusLineRange: IntRange?,
+): List<HighlightInfo> {
+    val daemon = DaemonCodeAnalyzerEx.getInstanceEx(project)
+    val finishedSignal = CompletableDeferred<Unit>()
+    val connection = project.messageBus.connect()
+    val started = AtomicBoolean(false)
+    val targetEditors = ensureTargetEditors(project, ctx.psiFile.virtualFile)
+    println("[smoker-diag] targetEditors=${targetEditors.size} file=${ctx.psiFile.virtualFile.path}")
+
+    fun tryComplete(force: Boolean = false) {
+        if (finishedSignal.isCompleted) return
+        val finished = runCatching {
+            ReadAction.compute<Boolean, Throwable> {
+                daemon.isErrorAnalyzingFinished(ctx.psiFile)
+            }
+        }.getOrDefault(false)
+        println("[smoker-diag] tryComplete force=$force started=${started.get()} finished=$finished")
+        if (finished && (force || started.get())) {
+            finishedSignal.complete(Unit)
+        }
+    }
+
+    fun isRelevant(fileEditors: Collection<FileEditor>): Boolean {
+        val editorFiles = fileEditors.mapNotNull { editorVirtualFile(it) }
+        val relevant = ctx.psiFile.virtualFile in editorFiles
+        println(
+            "[smoker-diag] isRelevant editors=${fileEditors.size} relevant=$relevant editorFiles=${editorFiles.joinToString { it.path }}"
+        )
+        return relevant
+    }
+
+    connection.subscribe(
+        DaemonCodeAnalyzer.DAEMON_EVENT_TOPIC,
+        object : DaemonListener {
+            override fun daemonStarting(fileEditors: Collection<FileEditor>) {
+                println("[smoker-diag] daemonStarting editors=${fileEditors.size}")
+                if (isRelevant(fileEditors)) {
+                    started.set(true)
+                    println("[smoker-diag] daemonStarting matched target file")
+                }
+            }
+
+            override fun daemonFinished() {
+                println("[smoker-diag] daemonFinished(no editors)")
+                tryComplete()
+            }
+
+            override fun daemonFinished(fileEditors: Collection<FileEditor>) {
+                println("[smoker-diag] daemonFinished editors=${fileEditors.size}")
+                if (isRelevant(fileEditors)) {
+                    tryComplete(force = true)
+                }
+            }
+
+            override fun daemonCanceled(reason: String, fileEditors: Collection<FileEditor>) {
+                println("[smoker-diag] daemonCanceled reason=$reason editors=${fileEditors.size}")
+                if (isRelevant(fileEditors)) {
+                    tryComplete(force = true)
+                }
+            }
+        }
+    )
+
+    try {
+        ApplicationManager.getApplication().invokeAndWait {
+            PsiDocumentManager.getInstance(project).commitDocument(ctx.document)
+            println("[smoker-diag] committed document; restarting daemon")
+            DaemonCodeAnalyzer.getInstance(project).restart(ctx.psiFile)
+        }
+        runCatching {
+            kotlinx.coroutines.withTimeout(DIAGNOSTICS_TIMEOUT) {
+                finishedSignal.await()
+            }
+        }.onFailure {
+            println("[smoker-diag] wait timeout or failure=${it.message}")
+        }
+    } finally {
+        println("[smoker-diag] disconnecting daemon listener")
+        connection.disconnect()
+    }
+
+    return collectCachedDiagnostics(project, ctx.document, focusLineRange)
+}
+
+private fun editorVirtualFile(editor: FileEditor): VirtualFile? {
+    return when (editor) {
+        is TextEditor -> FileDocumentManager.getInstance().getFile(editor.editor.document)
+        else -> null
+    }
+}
+
+private fun ensureTargetEditors(project: Project, vFile: VirtualFile): Set<FileEditor> {
+    var editors = emptySet<FileEditor>()
+    ApplicationManager.getApplication().invokeAndWait {
+        val fileEditorManager = FileEditorManager.getInstance(project)
+        editors = fileEditorManager.getAllEditors(vFile).toSet()
+        println("[smoker-diag] existingEditors=${editors.size} file=${vFile.path}")
+        if (editors.isEmpty()) {
+            val openedEditors = fileEditorManager.openFile(vFile, false).toSet()
+            println("[smoker-diag] openFile invoked openedEditors=${openedEditors.size} file=${vFile.path}")
+            editors = if (openedEditors.isNotEmpty()) {
+                openedEditors
+            } else {
+                fileEditorManager.getAllEditors(vFile).toSet()
+            }
+            println("[smoker-diag] editorsAfterOpen=${editors.size} file=${vFile.path}")
+        }
+    }
+    return editors
+}
+
+private fun collectCachedDiagnostics(
+    project: Project,
+    document: Document,
+    focusLineRange: IntRange?,
+): List<HighlightInfo> {
+    return ReadAction.compute<List<HighlightInfo>, Throwable> {
+        val infos = mutableListOf<HighlightInfo>()
+        DaemonCodeAnalyzerEx.processHighlights(
+            document,
+            project,
+            MIN_REPORTED_SEVERITY,
+            0,
+            document.textLength,
+        ) { info ->
+            if (shouldReport(info, document, focusLineRange)) {
+                infos += info
+            }
+            true
+        }
+        println("[smoker-diag] processHighlights totalFiltered=${infos.size}")
+        infos.forEachIndexed { index, info ->
+            val line = document.getLineNumber(info.startOffset) + 1
+            println(
+                "[smoker-diag] info[$index] severity=${info.severity} line=$line toolId=${info.inspectionToolId} desc=${info.description}"
+            )
+        }
+        infos
+            .distinctBy { listOf(it.startOffset, it.endOffset, it.severity.name, it.description.orEmpty()) }
+            .sortedWith(compareBy<HighlightInfo> { it.startOffset }.thenByDescending { it.severity.myVal })
+    }
+}
+
+private fun shouldReport(
+    info: HighlightInfo,
+    document: Document,
+    focusLineRange: IntRange?,
+): Boolean {
+    if (info.severity < MIN_REPORTED_SEVERITY) return false
+
+    val inspectionId = info.inspectionToolId
+    if (inspectionId != null && inspectionId in IGNORED_INSPECTION_IDS) return false
+
+    if (focusLineRange == null) return true
+
+    val startLine = document.getLineNumber(info.startOffset) + 1
+    val endOffset = (info.endOffset - 1).coerceAtLeast(info.startOffset)
+    val endLine = document.getLineNumber(endOffset) + 1
+    return startLine <= focusLineRange.last && endLine >= focusLineRange.first
 }
 
 private fun reloadEditorDocumentFromDisk(vFile: VirtualFile) {
@@ -108,8 +243,7 @@ private fun formatDiagnosticsSummary(document: Document, diags: List<HighlightIn
     if (diags.isEmpty()) return "\n\n[diagnostics] no issues"
     return buildString {
         append("\n\n")
-        append("[diagnostics]")
-        append(' ')
+        append("[diagnostics] ")
         append(diags.size)
         appendLine(" issue(s):")
         diags.take(MAX_DIAGNOSTICS_REPORTED).forEachIndexed { i, info ->

@@ -1,6 +1,7 @@
 package com.song.detekt
 
 import com.song.agent.CodeSmellAgent
+import com.song.agent.EditorSessionManager
 import com.song.git.CommitOutcome
 import com.song.git.GitCli
 import kotlinx.coroutines.runBlocking
@@ -35,6 +36,7 @@ class DetektFixService(
     private val gitCli: GitCli,
     private val agent: CodeSmellAgent,
     private val scanService: DetektScanService,
+    private val editorSessionManager: EditorSessionManager,
 ) {
     fun fixAll(
         detektConfig: DetektConfigContext?,
@@ -67,7 +69,12 @@ class DetektFixService(
                 for ((path, finding) in localFindings) {
                     val before = gitCli.captureDirtyFingerprints(projectRoot)
                     val base = promptBuilder.build(path, listOf(finding))
-                    val rawMessage = agent.start(base)
+                    val editorLease = editorSessionManager.openForAgent(path)
+                    val rawMessage = try {
+                        agent.start(base)
+                    } finally {
+                        editorSessionManager.closeForAgent(editorLease)
+                    }
                     val outcome = commitService.commitAgentChanges(projectRoot, before, rawMessage)
                     if (outcome.committed) {
                         outcomes += outcome

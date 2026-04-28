@@ -7,6 +7,7 @@ import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiDocumentManager
@@ -103,6 +104,7 @@ Expectation for required parameters:
         if (writeResult.error != null) return writeResult.error
 
         val finalVFile = writeResult.vFile
+        val diagnosticsLineRange = computeEditedLineRange(currentContent, editPlan.newContent)
 
         val snippet = extractSnippet(currentContent, editPlan.newContent)
         val llmContent = buildString {
@@ -116,7 +118,7 @@ Expectation for required parameters:
                 append(snippet)
             }
             if (finalVFile != null) {
-                append(runPostEditDiagnostics(project, finalVFile))
+                append(runPostEditDiagnostics(project, finalVFile, diagnosticsLineRange))
             }
         }
 
@@ -160,8 +162,8 @@ Expectation for required parameters:
             try {
                 WriteCommandAction.runWriteCommandAction(project) {
                     document.replaceString(0, document.textLength, newContent)
+                    PsiDocumentManager.getInstance(project).commitDocument(document)
                 }
-                PsiDocumentManager.getInstance(project).commitDocument(document)
                 FileDocumentManager.getInstance().saveDocument(document)
             } catch (e: Throwable) {
                 writeError = "Document write failed for ${vFile.path}: ${e.message}"
@@ -184,9 +186,11 @@ Expectation for required parameters:
         var refreshError: String? = null
         ApplicationManager.getApplication().invokeAndWait {
             try {
-                val refreshed = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(target)
-                refreshed?.refresh(false, false)
-                vFile = refreshed
+                WriteAction.run<Throwable> {
+                    val refreshed = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(target)
+                    refreshed?.refresh(false, false)
+                    vFile = refreshed
+                }
             } catch (e: Throwable) {
                 refreshError = "VFS refresh failed for ${target.absolutePath}: ${e.message}"
             }
@@ -330,5 +334,31 @@ Expectation for required parameters:
         if (from > to) return null
 
         return newLines.subList(from, to + 1).joinToString("\n")
+    }
+
+    private fun computeEditedLineRange(oldContent: String?, newContent: String, padding: Int = 2): IntRange? {
+        if (oldContent == null) return null
+
+        val oldLines = oldContent.lines()
+        val newLines = newContent.lines()
+
+        var prefix = 0
+        while (prefix < oldLines.size && prefix < newLines.size && oldLines[prefix] == newLines[prefix]) {
+            prefix++
+        }
+
+        if (prefix == oldLines.size && prefix == newLines.size) return null
+
+        var oldSuffix = oldLines.lastIndex
+        var newSuffix = newLines.lastIndex
+        while (oldSuffix >= prefix && newSuffix >= prefix && oldLines[oldSuffix] == newLines[newSuffix]) {
+            oldSuffix--
+            newSuffix--
+        }
+
+        val changedStartLine = (prefix + 1 - padding).coerceAtLeast(1)
+        val changedEndBase = if (newSuffix >= prefix) newSuffix + 1 else prefix + 1
+        val changedEndLine = (changedEndBase + padding).coerceAtMost(newLines.size.coerceAtLeast(1))
+        return changedStartLine..changedEndLine
     }
 }
