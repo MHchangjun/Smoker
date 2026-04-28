@@ -6,8 +6,8 @@ object ToolNames {
     const val EDIT = "edit"
     const val SHELL = "run_shell_command"
     const val GLOB = "glob"
-    const val GREP = "grep"
+    const val GREP = "grep_search"
     const val TASK = "task"
-    const val DIFF_FENCED_EDIT = "edit"
+
     const val LSP = "lsp"
 }

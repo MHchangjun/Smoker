@@ -44,9 +44,9 @@ Usage:
     data class Args(
         @property:LLMDescription("The regular expression pattern to search for in file contents")
         val pattern: String,
-        @property:LLMDescription("File or directory to search in (rg PATH). Optional — defaults to the workspace root. DO NOT pass \"undefined\" or \"null\"; simply omit the field.")
+        @property:LLMDescription("File or directory to search in (rg PATH). Defaults to current working directory.")
         val path: String? = null,
-        @property:LLMDescription("Glob pattern to filter files (e.g. \"*.js\", \"*.{ts,tsx}\") - maps to rg --glob. Pass the raw pattern only; do NOT wrap it in extra quotes.")
+        @property:LLMDescription("Glob pattern to filter files (e.g. \"*.js\", \"*.{ts,tsx}\") - maps to rg --glob")
         val glob: String? = null,
         @property:LLMDescription("Limit output to first N lines/entries. Optional — shows all matches up to the configured cap if omitted.")
         val limit: Int? = null
