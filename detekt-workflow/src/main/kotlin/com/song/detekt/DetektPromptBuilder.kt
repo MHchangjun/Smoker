@@ -6,22 +6,44 @@ import java.io.File
 class DetektPromptBuilder {
     fun build(path: String, findings: List<Finding>): String {
         val fileLines = File(path).readLines()
+        val ruleId = findings.firstOrNull()?.ruleId.orEmpty()
+        val plural = findings.size > 1
+        val issueWord = if (plural) "issues" else "issue"
+        val findingsHeader = if (plural) "**Findings:**" else "**Finding:**"
 
-        val blocks = findings
-            .sortedByDescending { it.startLine ?: 0 }
-            .joinToString("\n\n") { finding ->
-                val ruleId = finding.ruleId.takeIf { it.isNotBlank() } ?: "unknown"
-                val line = finding.startLine?.let { " line $it:" } ?: ""
-                val message = finding.message ?: "no message"
-                val code = extractCodeSnippet(fileLines, finding)
-                "[$ruleId]$line $message\n\n$code"
+        return buildString {
+            appendLine("Fix the following detekt $issueWord in `$path`.")
+            appendLine()
+            policyFor(ruleId)?.let {
+                appendLine("**Fix policy:** $it")
+                appendLine()
             }
+            appendLine(findingsHeader)
+            findings
+                .sortedByDescending { it.startLine ?: 0 }
+                .forEach { finding ->
+                    appendLine()
+                    val line = finding.startLine?.let { "line $it" } ?: "unknown line"
+                    val message = finding.message ?: "no message"
+                    appendLine("- **$line:** $message")
+                    appendLine()
+                    appendLine(extractCodeSnippet(fileLines, finding))
+                }
+        }.trimEnd()
+    }
 
-        return """
-$path
-
-$blocks
-""".trimIndent()
+    private fun policyFor(ruleId: String): String? = when {
+        ruleId.endsWith("PrintStackTrace") ->
+            "Remove the `e.printStackTrace()` call entirely. Do NOT replace it with any logger. " +
+                "If the catch block becomes empty, rename the exception variable to `_`."
+        ruleId.endsWith("ComplexCondition") ->
+            "Extract the condition into a private function. " +
+                "Do NOT split into multiple local boolean variables."
+        ruleId.endsWith("EmptyIfBlock") ->
+            "Remove the entire `if` block. If the condition contains function calls with side effects, " +
+                "extract those calls before the `if` and remove the `if` block afterward. " +
+                "Do NOT leave empty `if` blocks with a comment."
+        else -> null
     }
 
     private fun extractCodeSnippet(fileLines: List<String>, finding: Finding): String {
