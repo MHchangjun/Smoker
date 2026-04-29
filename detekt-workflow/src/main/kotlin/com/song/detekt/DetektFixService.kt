@@ -4,31 +4,10 @@ import com.song.agent.CodeSmellAgent
 import com.song.agent.EditorSessionManager
 import com.song.git.CommitOutcome
 import com.song.git.GitCli
+import com.song.sarif.Finding
 import kotlinx.coroutines.runBlocking
 import java.io.File
 
-private const val MAX_ITERATIONS = 30
-
-private val LOCAL_RULE_PREFIXES = listOf(
-    "detekt.complexity.",
-    "detekt.empty-blocks.",
-    "detekt.exceptions.",
-    "detekt.performance.",
-    "detekt.potential-bugs.",
-)
-
-private val LOCAL_RULES = setOf(
-    "detekt.coroutines.GlobalCoroutineUsage",
-    "detekt.coroutines.RedundantSuspendModifier",
-    "detekt.coroutines.SleepInsteadOfDelay",
-    "detekt.coroutines.SuspendFunSwallowedCancellation",
-    "detekt.coroutines.SuspendFunWithFlowReturnType",
-    "detekt.style.MaxLineLength",
-    "detekt.style.NewLineAtEndOfFile",
-    "detekt.style.SpacingBetweenPackageAndImports",
-    "detekt.naming.NoNameShadowing",
-    "detekt.naming.VariableNaming",
-)
 
 class DetektFixService(
     private val promptBuilder: DetektPromptBuilder,
@@ -37,6 +16,7 @@ class DetektFixService(
     private val agent: CodeSmellAgent,
     private val scanService: DetektScanService,
     private val editorSessionManager: EditorSessionManager,
+    private val progressListener: DetektProgressListener,
 ) {
     fun fixAll(
         detektConfig: DetektConfigContext?,
@@ -50,42 +30,77 @@ class DetektFixService(
 
         val outcomes = mutableListOf<CommitOutcome>()
         runBlocking {
-            for (iteration in 0 until MAX_ITERATIONS) {
-                val scan = scanService.scan(context)
-                val localFindings = scan.findings
-                    .filter { !it.absolutePath.isNullOrBlank() }
-                    .filter { isLocalRule(it.ruleId) }
-                    .groupBy { it.absolutePath!! }
-                    .mapNotNull { (path, fileFindings) ->
-                        val first = fileFindings.firstOrNull() ?: return@mapNotNull null
-                        path to first
-                    }
+            val scan = scanService.scan(context)
+            val batch = nextRuleBatch(scan.findings) ?: return@runBlocking
 
-                if (localFindings.isEmpty()) {
-                    println("No more local findings. Stopping after $iteration iterations.")
-                    break
+            println("Processing rule ${batch.ruleId} in ${batch.items.size} files ")
+
+            for ((fileIndex, item) in batch.items.withIndex()) {
+                progressListener.onRuleProgress(
+                    DetektRuleProgress(
+                        ruleId = batch.ruleId,
+                        totalFilesInRule = batch.items.size,
+                        remainingFilesInRule = batch.items.size - fileIndex - 1,
+                        currentFileIndex = fileIndex + 1,
+                        currentFilePath = item.path,
+                        currentFindings = item.findings,
+                    )
+                )
+
+                println(
+                    "  file ${fileIndex + 1}/${batch.items.size}: ${item.path} " +
+                            "(${item.findings.size} findings)"
+                )
+
+                val before = gitCli.captureDirtyFingerprints(projectRoot)
+                val base = promptBuilder.build(item.path, item.findings)
+                val editorLease = editorSessionManager.openForAgent(item.path)
+                val rawMessage = try {
+                    agent.start(base)
+                } finally {
+                    editorSessionManager.closeForAgent(editorLease)
                 }
-
-                for ((path, finding) in localFindings) {
-                    val before = gitCli.captureDirtyFingerprints(projectRoot)
-                    val base = promptBuilder.build(path, listOf(finding))
-                    val editorLease = editorSessionManager.openForAgent(path)
-                    val rawMessage = try {
-                        agent.start(base)
-                    } finally {
-                        editorSessionManager.closeForAgent(editorLease)
-                    }
-                    val outcome = commitService.commitAgentChanges(projectRoot, before, rawMessage)
-                    if (outcome.committed) {
-                        outcomes += outcome
-                    }
+                val outcome = commitService.commitAgentChanges(projectRoot, before, rawMessage)
+                if (outcome.committed) {
+                    outcomes += outcome
                 }
             }
         }
         return outcomes
     }
 
-    private fun isLocalRule(ruleId: String): Boolean =
-        LOCAL_RULE_PREFIXES.any { ruleId.startsWith(it, ignoreCase = true) }
-                || LOCAL_RULES.any { ruleId.equals(it, ignoreCase = true) }
+    private fun nextRuleBatch(findings: List<Finding>): RuleBatch? {
+        val localFindings = findings
+            .filter { !it.absolutePath.isNullOrBlank() }
+            .filter { !isComposeFile(it.absolutePath!!) }
+
+        val firstRuleId = localFindings.firstOrNull()?.ruleId ?: return null
+        val items = localFindings
+            .filter { it.ruleId == firstRuleId }
+            .groupBy { it.absolutePath!! }
+            .map { (path, fileFindings) ->
+                RuleWorkItem(path = path, findings = fileFindings)
+            }
+
+        return RuleBatch(ruleId = firstRuleId, items = items)
+    }
+
+    private fun isComposeFile(path: String): Boolean {
+        val file = File(path)
+        if (!file.isFile) return false
+        return runCatching { file.readText() }
+            .getOrNull()
+            ?.contains("@Composable")
+            ?: false
+    }
+
+    private data class RuleBatch(
+        val ruleId: String,
+        val items: List<RuleWorkItem>,
+    )
+
+    private data class RuleWorkItem(
+        val path: String,
+        val findings: List<Finding>,
+    )
 }

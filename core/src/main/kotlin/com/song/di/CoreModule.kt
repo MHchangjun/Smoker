@@ -1,6 +1,7 @@
 package com.song.di
 
 import com.intellij.openapi.project.Project
+import com.song.agent.AgentActivityListener
 import com.song.agent.CodeSmellAgent
 import com.song.agent.EditorSessionManager
 import com.song.agent.tool.di.toolModule
@@ -21,7 +22,8 @@ fun coreModule(root: Path, project: Project): Module = module {
     single {
         CodeSmellAgent(
             root.toAbsolutePath().normalize().toString(),
-            get(), get(), get(), get(), get(), get(),
+            get(), get(), get(), get(), get(), get(), get(),
+            getOrNull<AgentActivityListener>() ?: AgentActivityListener.NONE,
         )
     }
 

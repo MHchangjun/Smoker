@@ -13,4 +13,5 @@ fun toolModule(root: Path): Module = module {
     single { ReadFileTool(ReadFileTool.Config(workDir = root.toFile())) }
     single { WriteFileTool(get<Project>(), WriteFileTool.Config(workDir = root.toFile())) }
     single { EditTool(get<Project>(), EditTool.Config(workDir = root.toFile())) }
+    single { LspTool(get<Project>()) }
 }

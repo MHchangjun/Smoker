@@ -1,8 +1,9 @@
 package com.song.agent
 
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.fileEditor.FileEditor
 import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
+import com.intellij.openapi.fileEditor.TextEditor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
@@ -20,30 +21,47 @@ class EditorSessionManager(
             }
 
             val fileEditorManager = FileEditorManager.getInstance(project)
-            val existingEditors = fileEditorManager.getAllEditors(vFile).toSet()
-            log("existing=${existingEditors.size}", vFile.path)
-            if (existingEditors.isNotEmpty()) {
-                lease = EditorLease(vFile = vFile, openedEditors = emptySet())
-                return@invokeAndWait
+            val previousSelection = fileEditorManager.selectedTextEditor?.document?.let {
+                com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().getFile(it)
             }
+            val existingEditors = fileEditorManager.getAllEditors(vFile)
+            log("existing=${existingEditors.size}", vFile.path, "previous=${previousSelection?.path}")
 
-            val openedEditors = fileEditorManager.openFile(vFile, false).toSet()
-            log("opened=${openedEditors.size}", vFile.path)
-            lease = EditorLease(vFile = vFile, openedEditors = openedEditors)
+            val selectedEditor = fileEditorManager.openTextEditor(OpenFileDescriptor(project, vFile), true)
+            val selectedFile = selectedEditor?.document?.let {
+                com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().getFile(it)
+            }
+            val openedByAgent = existingEditors.isEmpty()
+            log(
+                "selected=${selectedEditor != null}",
+                "selectedFile=${selectedFile?.path}",
+                "openedByAgent=$openedByAgent",
+                vFile.path,
+            )
+            lease = EditorLease(
+                vFile = vFile,
+                previousSelection = previousSelection,
+                openedByAgent = openedByAgent,
+            )
         }
         return lease
     }
 
     fun closeForAgent(lease: EditorLease?) {
-        if (lease == null || lease.openedEditors.isEmpty()) return
+        if (lease == null) return
         ApplicationManager.getApplication().invokeAndWait {
             val fileEditorManager = FileEditorManager.getInstance(project)
-            val currentEditors = fileEditorManager.getAllEditors(lease.vFile).toSet()
-            val shouldClose = currentEditors.isNotEmpty() && currentEditors.all { it in lease.openedEditors }
+            lease.previousSelection?.let { previousFile ->
+                val restored = fileEditorManager.openTextEditor(OpenFileDescriptor(project, previousFile), true) != null
+                log("restored=$restored", "previous=${previousFile.path}")
+            }
+
+            val currentEditors = fileEditorManager.getAllEditors(lease.vFile)
+            val shouldClose = lease.openedByAgent && currentEditors.isNotEmpty()
             log(
                 "closing=${shouldClose}",
                 "current=${currentEditors.size}",
-                "openedByAgent=${lease.openedEditors.size}",
+                "openedByAgent=${lease.openedByAgent}",
                 lease.vFile.path,
             )
             if (shouldClose) {
@@ -60,5 +78,6 @@ class EditorSessionManager(
 
 data class EditorLease(
     val vFile: VirtualFile,
-    val openedEditors: Set<FileEditor>,
+    val previousSelection: VirtualFile?,
+    val openedByAgent: Boolean,
 )

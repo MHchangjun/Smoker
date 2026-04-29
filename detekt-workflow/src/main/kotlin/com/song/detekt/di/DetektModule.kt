@@ -11,7 +11,7 @@ fun detektModule(): Module = module {
     single { DetektPromptBuilder() }
     single { DetektCommitService(get()) }
     single { DetektBranchService(get()) }
-    single { DetektFixService(get(), get(), get(), get(), get(), get()) }
+    single { DetektFixService(get(), get(), get(), get(), get(), get(), get()) }
     single { BuildValidationService(get()) }
     single { DetektWorkflowRunner(get(), get(), get(), get(), get(), get(), get(), get()) }
 }

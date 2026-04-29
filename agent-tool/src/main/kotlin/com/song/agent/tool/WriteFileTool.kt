@@ -7,6 +7,7 @@ import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
+import com.song.agent.tool.diagnostics.captureDiagnosticsBaseline
 import com.song.agent.tool.diagnostics.runPostEditDiagnostics
 import kotlinx.serialization.Serializable
 import java.io.File
@@ -77,13 +78,19 @@ class WriteFileTool(
             }
         }
 
+        val diagnosticsBaseline = if (fileExisted) {
+            val existingVFile = resolveVirtualFile(resolved)
+            existingVFile?.let { captureDiagnosticsBaseline(project, it) }
+        } else {
+            null
+        }
         val writeResult = applyWrite(resolved, args.content, fileExisted)
         if (writeResult.error != null) {
             throw ToolExecutionException("Error writing ${args.path}: ${writeResult.error}")
         }
 
         val diagnostics = writeResult.vFile
-            ?.let { runPostEditDiagnostics(project, it) }
+            ?.let { runPostEditDiagnostics(project, it, baseline = diagnosticsBaseline) }
             ?.takeIf { it.isNotEmpty() }
 
         return Result(
@@ -125,6 +132,15 @@ class WriteFileTool(
 
     private fun validateInputs(args: Args) {
         if (args.path.isBlank()) throw ToolExecutionException("path must not be empty")
+    }
+
+    private fun resolveVirtualFile(target: File): VirtualFile? {
+        var vFile: VirtualFile? = null
+        ApplicationManager.getApplication().invokeAndWait {
+            val localFileSystem = LocalFileSystem.getInstance()
+            vFile = localFileSystem.findFileByIoFile(target) ?: localFileSystem.refreshAndFindFileByIoFile(target)
+        }
+        return vFile
     }
 
     private fun resolvePathInsideWorkspace(path: String): File {

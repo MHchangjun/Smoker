@@ -22,6 +22,8 @@ class CodeSmellAgent(
     private val writeFileTool: WriteFileTool,
     private val grepTool: GrepTool,
     private val globTool: GlobTool,
+    private val lspTool: LspTool,
+    private val activityListener: AgentActivityListener = AgentActivityListener.NONE,
 ) {
     suspend fun start(userPrompt: String): String {
         val agentService = buildAgentService()
@@ -52,29 +54,43 @@ class CodeSmellAgent(
             installFeatures = {
                 install(EventHandler.Feature) {
                     onAgentStarting { ctx ->
-                        log("AgentStart", ctx.context.agentInput)
+                        val input = ctx.context.agentInput?.toString().orEmpty()
+                        log("AgentStart", input)
+                        activityListener.onAgentStart(input)
                     }
 
                     onToolCallStarting { ctx ->
-                        log("ToolCall", ctx.toolName, "args=${ctx.toolArgs}")
+                        val args = ctx.toolArgs.toString()
+                        log("ToolCall", ctx.toolName, "args=$args")
+                        activityListener.onToolCallStart(ctx.toolName, args)
                     }
 
                     onToolCallCompleted { ctx ->
-                        log("ToolCallResult", ctx.toolName, "args=${ctx.toolResult.toString()}")
+                        val summary = ctx.toolResult.toString()
+                        log("ToolCallResult", ctx.toolName, "args=$summary")
+                        activityListener.onToolCallCompleted(ctx.toolName, summary)
                     }
 
                     onLLMCallCompleted { ctx ->
                         ctx.responses.forEach { response ->
                             when (response) {
-                                is ai.koog.prompt.message.Message.Reasoning -> log("Reasoning", response.content)
-                                is ai.koog.prompt.message.Message.Assistant -> log("Assistant", response.content)
+                                is ai.koog.prompt.message.Message.Reasoning -> {
+                                    log("Reasoning", response.content)
+                                    activityListener.onReasoning(response.content)
+                                }
+                                is ai.koog.prompt.message.Message.Assistant -> {
+                                    log("Assistant", response.content)
+                                    activityListener.onAssistant(response.content)
+                                }
                                 else -> {}
                             }
                         }
                     }
 
                     onToolCallFailed { ctx ->
-                        log("onToolCallFailed", ctx.toolName, "result = ${ctx.error?.message}")
+                        val msg = ctx.error?.message ?: "unknown error"
+                        log("onToolCallFailed", ctx.toolName, "result = $msg")
+                        activityListener.onToolCallFailed(ctx.toolName, msg)
                     }
                 }
             },
@@ -85,6 +101,7 @@ class CodeSmellAgent(
                 tool(writeFileTool)
                 tool(grepTool)
                 tool(globTool)
+                tool(lspTool)
             }
         )
     }
@@ -108,19 +125,21 @@ You are a refactoring agent running in a CLI environment.
 - **Proactiveness:** Fulfill the user's request thoroughly. When adding features or fixing bugs, this includes adding tests to ensure quality. Consider all created files, especially tests, to be permanent artifacts unless the user says otherwise.
 - **Confirm Ambiguity/Expansion:** Do not take significant actions beyond the clear scope of the request without confirming with the user. If asked *how* to do something, explain first, don't just do it.
 - **Explaining Changes:** After completing a code modification or file operation *do not* provide summaries unless asked.
-- **Path Construction:** Before using any file system tool (e.g., ${ToolNames.READ_FILE}' or '${ToolNames.WRITE_FILE}'), you must construct the full absolute path for the file_path argument. Always combine the absolute path of the project's root directory with the file's path relative to the root. For example, if the project root is /path/to/project/ and the file is foo/bar/baz.txt, the final path you must use is /path/to/project/foo/bar/baz.txt. If the user provides a relative path, you must resolve it against the root directory to create an absolute path.
+- **Path Construction:** Use absolute paths for file mutation and direct file reads (`${ToolNames.READ_FILE}`, `${ToolNames.WRITE_FILE}`, `${ToolNames.EDIT}`). For search tools (`${ToolNames.GREP}`, `${ToolNames.GLOB}`), prefer raw workspace-relative paths like `src` or `app/src/main`, or omit the path to search from the workspace root. Do not add extra wrapping quotes around path arguments.
 - **Do Not revert changes:** Do not revert changes to the codebase unless asked to do so by the user. Only revert changes made by you if they have resulted in an error or if the user has explicitly asked you to revert the changes.
 
 # Primary Workflows
 
 ## Code Smell Fix Tasks
-When requested to fix a reported code smell, follow this approach:
-- **Plan:** Identify the smell type and pick the fix strategy from the Rules and Project-Specific Fix Policies below.
-- **Implement:** Apply the minimal fix using the available tools (e.g., '${ToolNames.EDIT}', '${ToolNames.WRITE_FILE}'), strictly adhering to the Rules and Project-Specific Fix Policies. Do NOT expand scope beyond the reported smell. Edit results include auto-injected `[diagnostics]` — ensure no new errors before moving on.
-- **Adapt:** If a fix turns out to risk altering behavior, fall back to `@Suppress` per Rule 2.
-- **Summarize:** Output a single-line summary of what was changed. Format: `refactor: <what changed>` (e.g., `refactor: removed e.printStackTrace() and renamed exception to _`).
+When requested to fix one or more issues of the same rule in a single file, follow this approach:
+- **Plan:** Otherwise, identify the rule and pick the fix strategy from the Rules and Project-Specific Fix Policies below.
+- **Implement:** Apply the minimal fix using the available tools (e.g., '${ToolNames.EDIT}', '${ToolNames.WRITE_FILE}'), strictly adhering to the Rules and Project-Specific Fix Policies. Do NOT expand scope beyond the reported issues. Process issues one at a time; do not batch unrelated edits into a single tool call. Edit results include auto-injected `[diagnostics]`, ensure no new errors before moving on.
+- **Adapt:** If any fix turns out to risk altering behavior, fall back to `@Suppress` per Rule 2 (can be applied per-issue).
+- **Summarize:** Output a single-line summary in one of these formats:
+  - When fix applied: `refactor: <what changed>` 
+  - When @Suppress used per Rule 2: `suppress: <ruleId> due to <reason>`
 
-**Key Principle:** One smell, one minimal fix, no new errors.
+**Key Principle:** Minimal, isolated fix per issue. No new errors.
 
 ### Rules
 1. **Minimal change only** : Fix the reported issue and nothing else. Do NOT refactor surrounding code, even if it looks improvable.

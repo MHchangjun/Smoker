@@ -11,6 +11,7 @@ import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiDocumentManager
+import com.song.agent.tool.diagnostics.captureDiagnosticsBaseline
 import com.song.agent.tool.diagnostics.runPostEditDiagnostics
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -100,6 +101,7 @@ Expectation for required parameters:
             return "Failed to create parent directory: ${parent.path}"
         }
 
+        val diagnosticsBaseline = existingState?.vFile?.let { captureDiagnosticsBaseline(project, it) }
         val writeResult = applyWrite(target, editPlan.newContent, existingState)
         if (writeResult.error != null) return writeResult.error
 
@@ -118,7 +120,7 @@ Expectation for required parameters:
                 append(snippet)
             }
             if (finalVFile != null) {
-                append(runPostEditDiagnostics(project, finalVFile, diagnosticsLineRange))
+                append(runPostEditDiagnostics(project, finalVFile, diagnosticsLineRange, diagnosticsBaseline))
             }
         }
 

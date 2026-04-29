@@ -33,9 +33,12 @@ internal suspend fun runPostEditDiagnostics(
     project: Project,
     vFile: VirtualFile,
     focusLineRange: IntRange? = null,
+    baseline: DiagnosticsBaseline? = null,
 ): String {
     if (project.isDisposed) return ""
-    println("[smoker-diag] start file=${vFile.path} focusLineRange=$focusLineRange")
+    println(
+        "[smoker-diag] start file=${vFile.path} focusLineRange=full requestedRange=$focusLineRange baseline=${baseline?.issues?.size ?: 0}"
+    )
 
     val dumbService = DumbService.getInstance(project)
     if (dumbService.isDumb) {
@@ -52,18 +55,51 @@ internal suspend fun runPostEditDiagnostics(
     } ?: return "\n\n[diagnostics] unavailable"
     println("[smoker-diag] context ready psi=${ctx.psiFile.virtualFile.path} textLength=${ctx.document.textLength}")
 
-    val issues = waitForFreshDiagnostics(project, ctx, focusLineRange)
+    val issues = waitForFreshDiagnostics(project, ctx)
     println("[smoker-diag] collected issues=${issues.size}")
 
+    val filteredIssues = baseline?.let {
+        diffNewIssues(ctx.document, issues, it)
+    } ?: issues
+    println("[smoker-diag] new issues after baseline diff=${filteredIssues.size}")
+
     return ReadAction.compute<String, Throwable> {
-        formatDiagnosticsSummary(ctx.document, issues)
+        formatDiagnosticsSummary(ctx.document, filteredIssues)
     }
+}
+
+internal suspend fun captureDiagnosticsBaseline(
+    project: Project,
+    vFile: VirtualFile,
+): DiagnosticsBaseline? {
+    if (project.isDisposed) return null
+    println("[smoker-diag] capture baseline file=${vFile.path}")
+
+    val dumbService = DumbService.getInstance(project)
+    if (dumbService.isDumb) {
+        println("[smoker-diag] project is dumb; waiting for smart mode before baseline")
+        dumbService.waitForSmartMode()
+    }
+
+    reloadEditorDocumentFromDisk(vFile)
+
+    val ctx = ReadAction.compute<DiagnosticsContext?, Throwable> {
+        val psiFile = PsiManager.getInstance(project).findFile(vFile) ?: return@compute null
+        val document = FileDocumentManager.getInstance().getDocument(vFile) ?: return@compute null
+        DiagnosticsContext(psiFile, document)
+    } ?: return null
+
+    val issues = waitForFreshDiagnostics(project, ctx)
+    val snapshots = ReadAction.compute<List<DiagnosticSnapshot>, Throwable> {
+        issues.map { buildDiagnosticSnapshot(ctx.document, it) }
+    }
+    println("[smoker-diag] baseline captured issues=${snapshots.size}")
+    return DiagnosticsBaseline(snapshots)
 }
 
 private suspend fun waitForFreshDiagnostics(
     project: Project,
     ctx: DiagnosticsContext,
-    focusLineRange: IntRange?,
 ): List<HighlightInfo> {
     val daemon = DaemonCodeAnalyzerEx.getInstanceEx(project)
     val finishedSignal = CompletableDeferred<Unit>()
@@ -144,7 +180,7 @@ private suspend fun waitForFreshDiagnostics(
         connection.disconnect()
     }
 
-    return collectCachedDiagnostics(project, ctx.document, focusLineRange)
+    return collectCachedDiagnostics(project, ctx.document)
 }
 
 private fun editorVirtualFile(editor: FileEditor): VirtualFile? {
@@ -177,7 +213,6 @@ private fun ensureTargetEditors(project: Project, vFile: VirtualFile): Set<FileE
 private fun collectCachedDiagnostics(
     project: Project,
     document: Document,
-    focusLineRange: IntRange?,
 ): List<HighlightInfo> {
     return ReadAction.compute<List<HighlightInfo>, Throwable> {
         val infos = mutableListOf<HighlightInfo>()
@@ -188,12 +223,12 @@ private fun collectCachedDiagnostics(
             0,
             document.textLength,
         ) { info ->
-            if (shouldReport(info, document, focusLineRange)) {
+            if (shouldReport(info)) {
                 infos += info
             }
             true
         }
-        println("[smoker-diag] processHighlights totalFiltered=${infos.size}")
+        println("[smoker-diag] processHighlights focusLineRange=full totalFiltered=${infos.size}")
         infos.forEachIndexed { index, info ->
             val line = document.getLineNumber(info.startOffset) + 1
             println(
@@ -208,20 +243,12 @@ private fun collectCachedDiagnostics(
 
 private fun shouldReport(
     info: HighlightInfo,
-    document: Document,
-    focusLineRange: IntRange?,
 ): Boolean {
     if (info.severity < MIN_REPORTED_SEVERITY) return false
 
     val inspectionId = info.inspectionToolId
     if (inspectionId != null && inspectionId in IGNORED_INSPECTION_IDS) return false
-
-    if (focusLineRange == null) return true
-
-    val startLine = document.getLineNumber(info.startOffset) + 1
-    val endOffset = (info.endOffset - 1).coerceAtLeast(info.startOffset)
-    val endLine = document.getLineNumber(endOffset) + 1
-    return startLine <= focusLineRange.last && endLine >= focusLineRange.first
+    return true
 }
 
 private fun reloadEditorDocumentFromDisk(vFile: VirtualFile) {
@@ -238,6 +265,55 @@ private data class DiagnosticsContext(
     val psiFile: com.intellij.psi.PsiFile,
     val document: Document,
 )
+
+internal data class DiagnosticsBaseline(
+    val issues: List<DiagnosticSnapshot>,
+)
+
+internal data class DiagnosticSnapshot(
+    val severity: String,
+    val inspectionToolId: String?,
+    val description: String,
+    val highlightText: String,
+)
+
+private fun diffNewIssues(
+    document: Document,
+    issues: List<HighlightInfo>,
+    baseline: DiagnosticsBaseline,
+): List<HighlightInfo> {
+    val remaining = baseline.issues
+        .groupingBy { it }
+        .eachCount()
+        .toMutableMap()
+
+    return issues.filter { info ->
+        val snapshot = buildDiagnosticSnapshot(document, info)
+        val count = remaining[snapshot] ?: 0
+        if (count > 0) {
+            remaining[snapshot] = count - 1
+            false
+        } else {
+            true
+        }
+    }
+}
+
+private fun buildDiagnosticSnapshot(
+    document: Document,
+    info: HighlightInfo,
+): DiagnosticSnapshot {
+    val endOffset = info.endOffset.coerceAtMost(document.textLength).coerceAtLeast(info.startOffset)
+    val highlightText = document.getText(com.intellij.openapi.util.TextRange(info.startOffset, endOffset))
+        .trim()
+        .replace(Regex("\\s+"), " ")
+    return DiagnosticSnapshot(
+        severity = info.severity.name,
+        inspectionToolId = info.inspectionToolId,
+        description = info.description.orEmpty(),
+        highlightText = highlightText,
+    )
+}
 
 private fun formatDiagnosticsSummary(document: Document, diags: List<HighlightInfo>): String {
     if (diags.isEmpty()) return "\n\n[diagnostics] no issues"
