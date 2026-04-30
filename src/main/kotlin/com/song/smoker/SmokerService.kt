@@ -2,6 +2,10 @@ package com.song.smoker
 
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
+import com.song.agent.AgentActivityListener
+import com.song.agent.tool.EditObserver
+import com.song.detekt.DetektProgressListener
+import com.song.detekt.DetektRuleProgress
 import com.song.detekt.DetektWorkflowRunner
 import com.song.detekt.loadDetektConfig
 import com.song.di.startAgentKoin
@@ -14,18 +18,28 @@ import java.nio.file.Paths
 class SmokerService(
     private val project: Project,
     private val log: (String) -> Unit,
+    private val onRuleProgress: (DetektRuleProgress) -> Unit = {},
+    private val activityListener: AgentActivityListener = AgentActivityListener.NONE,
+    private val editObserver: EditObserver = EditObserver.NONE,
 ) {
     suspend fun run() {
         val basePath = project.basePath
             ?: throw IllegalStateException("project.basePath is null — open a real project first")
         val rootPath = Paths.get(basePath).toAbsolutePath().normalize()
+        onRuleProgress(DetektRuleProgress())
 
         log("Starting Smoker for ${project.name}")
         log("Waiting for smart mode...")
         DumbService.getInstance(project).waitForSmartMode()
 
         log("Initializing agent (Koin)...")
-        val koin = startAgentKoin(rootPath, project)
+        val koin = startAgentKoin(
+            rootPath,
+            project,
+            DetektProgressListener { progress -> onRuleProgress(progress) },
+            activityListener,
+            editObserver,
+        )
         try {
             log("Running detekt workflow...")
             val detektConfig = loadDetektConfig(rootPath)
@@ -33,6 +47,7 @@ class SmokerService(
             runner.run(rootPath.toFile(), detektConfig)
             log("Done")
         } finally {
+            onRuleProgress(DetektRuleProgress())
             GlobalContext.stopKoin()
         }
     }

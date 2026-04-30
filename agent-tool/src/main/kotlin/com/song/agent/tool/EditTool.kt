@@ -11,7 +11,6 @@ import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiDocumentManager
-import com.song.agent.tool.diagnostics.captureDiagnosticsBaseline
 import com.song.agent.tool.diagnostics.runPostEditDiagnostics
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -21,6 +20,7 @@ import java.io.File
 class EditTool(
     private val project: Project,
     private val config: Config = Config(),
+    private val editObserver: EditObserver = EditObserver.NONE,
 ) : Tool<EditTool.Args, String>(
     argsSerializer = Args.serializer(),
     resultSerializer = String.serializer(),
@@ -101,9 +101,10 @@ Expectation for required parameters:
             return "Failed to create parent directory: ${parent.path}"
         }
 
-        val diagnosticsBaseline = existingState?.vFile?.let { captureDiagnosticsBaseline(project, it) }
         val writeResult = applyWrite(target, editPlan.newContent, existingState)
         if (writeResult.error != null) return writeResult.error
+
+        notifyEditObserver(target.path, currentContent, editPlan.newContent)
 
         val finalVFile = writeResult.vFile
         val diagnosticsLineRange = computeEditedLineRange(currentContent, editPlan.newContent)
@@ -120,7 +121,7 @@ Expectation for required parameters:
                 append(snippet)
             }
             if (finalVFile != null) {
-                append(runPostEditDiagnostics(project, finalVFile, diagnosticsLineRange, diagnosticsBaseline))
+                append(runPostEditDiagnostics(project, finalVFile, diagnosticsLineRange))
             }
         }
 
@@ -336,6 +337,39 @@ Expectation for required parameters:
         if (from > to) return null
 
         return newLines.subList(from, to + 1).joinToString("\n")
+    }
+
+    private fun notifyEditObserver(absolutePath: String, oldContent: String?, newContent: String) {
+        if (editObserver === EditObserver.NONE) return
+        val (removed, added) = computeChangedLines(oldContent, newContent)
+        if (removed.isEmpty() && added.isEmpty()) return
+        runCatching { editObserver.onEdit(absolutePath, removed, added) }
+    }
+
+    private fun computeChangedLines(
+        oldContent: String?,
+        newContent: String,
+        maxLines: Int = 3,
+    ): Pair<List<String>, List<String>> {
+        val newLines = newContent.lines()
+        if (oldContent == null) {
+            return emptyList<String>() to newLines.take(maxLines)
+        }
+        val oldLines = oldContent.lines()
+
+        var prefix = 0
+        while (prefix < oldLines.size && prefix < newLines.size && oldLines[prefix] == newLines[prefix]) {
+            prefix++
+        }
+        var oldSuffix = oldLines.lastIndex
+        var newSuffix = newLines.lastIndex
+        while (oldSuffix >= prefix && newSuffix >= prefix && oldLines[oldSuffix] == newLines[newSuffix]) {
+            oldSuffix--
+            newSuffix--
+        }
+        val removed = if (oldSuffix >= prefix) oldLines.subList(prefix, oldSuffix + 1) else emptyList()
+        val added = if (newSuffix >= prefix) newLines.subList(prefix, newSuffix + 1) else emptyList()
+        return removed.take(maxLines) to added.take(maxLines)
     }
 
     private fun computeEditedLineRange(oldContent: String?, newContent: String, padding: Int = 2): IntRange? {

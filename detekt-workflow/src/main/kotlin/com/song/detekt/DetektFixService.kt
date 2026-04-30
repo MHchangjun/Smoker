@@ -7,6 +7,8 @@ import com.song.git.GitCli
 import com.song.sarif.Finding
 import kotlinx.coroutines.runBlocking
 import java.io.File
+import java.time.Duration
+import java.time.Instant
 
 
 class DetektFixService(
@@ -35,7 +37,17 @@ class DetektFixService(
 
             println("Processing rule ${batch.ruleId} in ${batch.items.size} files ")
 
+            var lastOutcome: PreviousFileOutcome? = null
             for ((fileIndex, item) in batch.items.withIndex()) {
+                val upcoming = batch.items
+                    .drop(fileIndex + 1)
+                    .map { up ->
+                        UpcomingTask(
+                            ruleId = batch.ruleId,
+                            filePath = up.path,
+                            findingCount = up.findings.size,
+                        )
+                    }
                 progressListener.onRuleProgress(
                     DetektRuleProgress(
                         ruleId = batch.ruleId,
@@ -44,6 +56,8 @@ class DetektFixService(
                         currentFileIndex = fileIndex + 1,
                         currentFilePath = item.path,
                         currentFindings = item.findings,
+                        upcoming = upcoming,
+                        lastOutcome = lastOutcome,
                     )
                 )
 
@@ -55,6 +69,7 @@ class DetektFixService(
                 val before = gitCli.captureDirtyFingerprints(projectRoot)
                 val base = promptBuilder.build(item.path, item.findings)
                 val editorLease = editorSessionManager.openForAgent(item.path)
+                val fileStart = Instant.now()
                 val rawMessage = try {
                     agent.start(base)
                 } finally {
@@ -64,6 +79,29 @@ class DetektFixService(
                 if (outcome.committed) {
                     outcomes += outcome
                 }
+                lastOutcome = PreviousFileOutcome(
+                    ruleId = batch.ruleId,
+                    filePath = item.path,
+                    committed = outcome.committed,
+                    commitSha = outcome.commitSha,
+                    rawMessage = rawMessage,
+                    durationMs = Duration.between(fileStart, Instant.now()).toMillis(),
+                )
+            }
+            // Surface the final file's outcome even though there's no further file to start.
+            if (lastOutcome != null) {
+                progressListener.onRuleProgress(
+                    DetektRuleProgress(
+                        ruleId = batch.ruleId,
+                        totalFilesInRule = batch.items.size,
+                        remainingFilesInRule = 0,
+                        currentFileIndex = batch.items.size,
+                        currentFilePath = null,
+                        currentFindings = emptyList(),
+                        upcoming = emptyList(),
+                        lastOutcome = lastOutcome,
+                    )
+                )
             }
         }
         return outcomes

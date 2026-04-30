@@ -33,12 +33,9 @@ internal suspend fun runPostEditDiagnostics(
     project: Project,
     vFile: VirtualFile,
     focusLineRange: IntRange? = null,
-    baseline: DiagnosticsBaseline? = null,
 ): String {
     if (project.isDisposed) return ""
-    println(
-        "[smoker-diag] start file=${vFile.path} focusLineRange=full requestedRange=$focusLineRange baseline=${baseline?.issues?.size ?: 0}"
-    )
+    println("[smoker-diag] start file=${vFile.path} focusLineRange=full requestedRange=$focusLineRange")
 
     val dumbService = DumbService.getInstance(project)
     if (dumbService.isDumb) {
@@ -58,43 +55,9 @@ internal suspend fun runPostEditDiagnostics(
     val issues = waitForFreshDiagnostics(project, ctx)
     println("[smoker-diag] collected issues=${issues.size}")
 
-    val filteredIssues = baseline?.let {
-        diffNewIssues(ctx.document, issues, it)
-    } ?: issues
-    println("[smoker-diag] new issues after baseline diff=${filteredIssues.size}")
-
     return ReadAction.compute<String, Throwable> {
-        formatDiagnosticsSummary(ctx.document, filteredIssues)
+        formatDiagnosticsSummary(ctx.document, issues)
     }
-}
-
-internal suspend fun captureDiagnosticsBaseline(
-    project: Project,
-    vFile: VirtualFile,
-): DiagnosticsBaseline? {
-    if (project.isDisposed) return null
-    println("[smoker-diag] capture baseline file=${vFile.path}")
-
-    val dumbService = DumbService.getInstance(project)
-    if (dumbService.isDumb) {
-        println("[smoker-diag] project is dumb; waiting for smart mode before baseline")
-        dumbService.waitForSmartMode()
-    }
-
-    reloadEditorDocumentFromDisk(vFile)
-
-    val ctx = ReadAction.compute<DiagnosticsContext?, Throwable> {
-        val psiFile = PsiManager.getInstance(project).findFile(vFile) ?: return@compute null
-        val document = FileDocumentManager.getInstance().getDocument(vFile) ?: return@compute null
-        DiagnosticsContext(psiFile, document)
-    } ?: return null
-
-    val issues = waitForFreshDiagnostics(project, ctx)
-    val snapshots = ReadAction.compute<List<DiagnosticSnapshot>, Throwable> {
-        issues.map { buildDiagnosticSnapshot(ctx.document, it) }
-    }
-    println("[smoker-diag] baseline captured issues=${snapshots.size}")
-    return DiagnosticsBaseline(snapshots)
 }
 
 private suspend fun waitForFreshDiagnostics(
@@ -265,55 +228,6 @@ private data class DiagnosticsContext(
     val psiFile: com.intellij.psi.PsiFile,
     val document: Document,
 )
-
-internal data class DiagnosticsBaseline(
-    val issues: List<DiagnosticSnapshot>,
-)
-
-internal data class DiagnosticSnapshot(
-    val severity: String,
-    val inspectionToolId: String?,
-    val description: String,
-    val highlightText: String,
-)
-
-private fun diffNewIssues(
-    document: Document,
-    issues: List<HighlightInfo>,
-    baseline: DiagnosticsBaseline,
-): List<HighlightInfo> {
-    val remaining = baseline.issues
-        .groupingBy { it }
-        .eachCount()
-        .toMutableMap()
-
-    return issues.filter { info ->
-        val snapshot = buildDiagnosticSnapshot(document, info)
-        val count = remaining[snapshot] ?: 0
-        if (count > 0) {
-            remaining[snapshot] = count - 1
-            false
-        } else {
-            true
-        }
-    }
-}
-
-private fun buildDiagnosticSnapshot(
-    document: Document,
-    info: HighlightInfo,
-): DiagnosticSnapshot {
-    val endOffset = info.endOffset.coerceAtMost(document.textLength).coerceAtLeast(info.startOffset)
-    val highlightText = document.getText(com.intellij.openapi.util.TextRange(info.startOffset, endOffset))
-        .trim()
-        .replace(Regex("\\s+"), " ")
-    return DiagnosticSnapshot(
-        severity = info.severity.name,
-        inspectionToolId = info.inspectionToolId,
-        description = info.description.orEmpty(),
-        highlightText = highlightText,
-    )
-}
 
 private fun formatDiagnosticsSummary(document: Document, diags: List<HighlightInfo>): String {
     if (diags.isEmpty()) return "\n\n[diagnostics] no issues"

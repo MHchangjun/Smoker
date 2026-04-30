@@ -59,10 +59,9 @@ Fast file pattern matching tool that works with any codebase size
     override suspend fun execute(args: Args): Result {
         val pattern = stripWrappingQuotes(args.pattern.trim())
         if (pattern.isEmpty()) throw ToolExecutionException("pattern must not be blank")
-        if (args.path != null && args.path.isBlank()) throw ToolExecutionException("path must not be blank when provided")
 
         val maxMatches = config.default_max_matches
-        val targetPath = args.path?.trim()?.takeIf { it.isNotEmpty() } ?: "."
+        val targetPath = normalizeSearchPath(args.path) ?: "."
 
         val resolvedTarget = resolvePathInsideWorkspace(targetPath)
         if (!resolvedTarget.exists()) {
@@ -85,7 +84,7 @@ Fast file pattern matching tool that works with any codebase size
             throw ToolExecutionException("glob error: $errorMsg")
         }
 
-        return parseOutput(output.stdout, maxMatches, pattern, args.path)
+        return parseOutput(output.stdout, maxMatches, pattern, args.path?.let { targetPath })
     }
 
     private fun buildRipgrepCommand(pattern: String, path: String, excludePatterns: List<String>): List<String> {
@@ -143,6 +142,14 @@ Fast file pattern matching tool that works with any codebase size
         val first = raw.first()
         val last = raw.last()
         return if ((first == '"' || first == '\'') && first == last) raw.substring(1, raw.length - 1) else raw
+    }
+
+    private fun normalizeSearchPath(rawPath: String?): String? {
+        val trimmed = rawPath?.trim() ?: return null
+        val normalized = stripWrappingQuotes(trimmed).trim()
+        return normalized
+            .takeIf { it.isNotEmpty() }
+            ?.takeUnless { it.equals("null", ignoreCase = true) || it.equals("undefined", ignoreCase = true) }
     }
 
     private fun truncateUtf8ToBytes(text: String, maxBytes: Int): String {

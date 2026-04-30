@@ -72,7 +72,7 @@ Usage:
 
         val maxMatches = (args.limit ?: config.default_max_matches).coerceAtLeast(1)
 
-        val rawPath = args.path?.trim()?.takeIf { it.isNotEmpty() } ?: "."
+        val rawPath = normalizeSearchPath(args.path) ?: "."
         val resolvedTarget = resolvePathInsideWorkspace(rawPath)
         if (!resolvedTarget.exists()) {
             throw ToolExecutionException("Path does not exist: $rawPath")
@@ -96,7 +96,7 @@ Usage:
             throw ToolExecutionException("grep error: $errorMsg")
         }
 
-        return parseOutput(output.stdout, maxMatches, pattern, args.path, glob)
+        return parseOutput(output.stdout, maxMatches, pattern, args.path?.let { rawPath }, glob)
     }
 
     private fun buildRipgrepCommand(
@@ -174,6 +174,14 @@ Usage:
         val first = raw.first()
         val last = raw.last()
         return if ((first == '"' || first == '\'') && first == last) raw.substring(1, raw.length - 1) else raw
+    }
+
+    private fun normalizeSearchPath(rawPath: String?): String? {
+        val trimmed = rawPath?.trim() ?: return null
+        val normalized = stripWrappingQuotes(trimmed).trim()
+        return normalized
+            .takeIf { it.isNotEmpty() }
+            ?.takeUnless { it.equals("null", ignoreCase = true) || it.equals("undefined", ignoreCase = true) }
     }
 
     private fun truncateUtf8ToBytes(text: String, maxBytes: Int): String {

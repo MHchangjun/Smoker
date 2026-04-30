@@ -7,7 +7,6 @@ import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
-import com.song.agent.tool.diagnostics.captureDiagnosticsBaseline
 import com.song.agent.tool.diagnostics.runPostEditDiagnostics
 import kotlinx.serialization.Serializable
 import java.io.File
@@ -15,6 +14,7 @@ import java.io.File
 class WriteFileTool(
     private val project: Project,
     private val config: Config = Config(),
+    private val editObserver: EditObserver = EditObserver.NONE,
 ) : Tool<WriteFileTool.Args, WriteFileTool.Result>(
     argsSerializer = Args.serializer(),
     resultSerializer = Result.serializer(),
@@ -66,6 +66,7 @@ class WriteFileTool(
         if (fileExisted && !args.overwrite) {
             throw ToolExecutionException("File '${args.path}' exists. Set overwrite=true to replace.")
         }
+        val priorContent = if (fileExisted) runCatching { resolved.readText(Charsets.UTF_8) }.getOrNull() else null
 
         val parent = resolved.parentFile
         if (parent != null) {
@@ -78,19 +79,15 @@ class WriteFileTool(
             }
         }
 
-        val diagnosticsBaseline = if (fileExisted) {
-            val existingVFile = resolveVirtualFile(resolved)
-            existingVFile?.let { captureDiagnosticsBaseline(project, it) }
-        } else {
-            null
-        }
         val writeResult = applyWrite(resolved, args.content, fileExisted)
         if (writeResult.error != null) {
             throw ToolExecutionException("Error writing ${args.path}: ${writeResult.error}")
         }
 
+        notifyEditObserver(resolved.path, priorContent, args.content)
+
         val diagnostics = writeResult.vFile
-            ?.let { runPostEditDiagnostics(project, it, baseline = diagnosticsBaseline) }
+            ?.let { runPostEditDiagnostics(project, it) }
             ?.takeIf { it.isNotEmpty() }
 
         return Result(
@@ -134,13 +131,28 @@ class WriteFileTool(
         if (args.path.isBlank()) throw ToolExecutionException("path must not be empty")
     }
 
-    private fun resolveVirtualFile(target: File): VirtualFile? {
-        var vFile: VirtualFile? = null
-        ApplicationManager.getApplication().invokeAndWait {
-            val localFileSystem = LocalFileSystem.getInstance()
-            vFile = localFileSystem.findFileByIoFile(target) ?: localFileSystem.refreshAndFindFileByIoFile(target)
+    private fun notifyEditObserver(absolutePath: String, oldContent: String?, newContent: String) {
+        if (editObserver === EditObserver.NONE) return
+        val newLines = newContent.lines()
+        if (oldContent == null) {
+            runCatching { editObserver.onEdit(absolutePath, emptyList(), newLines.take(3)) }
+            return
         }
-        return vFile
+        val oldLines = oldContent.lines()
+        var prefix = 0
+        while (prefix < oldLines.size && prefix < newLines.size && oldLines[prefix] == newLines[prefix]) {
+            prefix++
+        }
+        var oldSuffix = oldLines.lastIndex
+        var newSuffix = newLines.lastIndex
+        while (oldSuffix >= prefix && newSuffix >= prefix && oldLines[oldSuffix] == newLines[newSuffix]) {
+            oldSuffix--
+            newSuffix--
+        }
+        val removed = if (oldSuffix >= prefix) oldLines.subList(prefix, oldSuffix + 1).take(3) else emptyList()
+        val added = if (newSuffix >= prefix) newLines.subList(prefix, newSuffix + 1).take(3) else emptyList()
+        if (removed.isEmpty() && added.isEmpty()) return
+        runCatching { editObserver.onEdit(absolutePath, removed, added) }
     }
 
     private fun resolvePathInsideWorkspace(path: String): File {

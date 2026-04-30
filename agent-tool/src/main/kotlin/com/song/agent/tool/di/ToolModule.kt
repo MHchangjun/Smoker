@@ -11,7 +11,19 @@ fun toolModule(root: Path): Module = module {
     single { GrepTool(GrepTool.Config(workDir = root.toFile())) }
     single { GlobTool(GlobTool.Config(workDir = root.toFile())) }
     single { ReadFileTool(ReadFileTool.Config(workDir = root.toFile())) }
-    single { WriteFileTool(get<Project>(), WriteFileTool.Config(workDir = root.toFile())) }
-    single { EditTool(get<Project>(), EditTool.Config(workDir = root.toFile())) }
+    single {
+        WriteFileTool(
+            get<Project>(),
+            WriteFileTool.Config(workDir = root.toFile()),
+            getOrNull<EditObserver>() ?: EditObserver.NONE,
+        )
+    }
+    single {
+        EditTool(
+            get<Project>(),
+            EditTool.Config(workDir = root.toFile()),
+            getOrNull<EditObserver>() ?: EditObserver.NONE,
+        )
+    }
     single { LspTool(get<Project>()) }
 }
