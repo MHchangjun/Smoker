@@ -211,7 +211,16 @@ private fun shouldReport(
 
     val inspectionId = info.inspectionToolId
     if (inspectionId != null && inspectionId in IGNORED_INSPECTION_IDS) return false
-    return true
+
+    // Only report build-blocking compiler diagnostics. The Kotlin compiler
+    // prefixes its descriptions with `[DIAGNOSTIC_ID]` — e.g.
+    // `[UNRESOLVED_REFERENCE]`, `[UNSAFE_CALL]`, `[TYPE_MISMATCH]`. IDE
+    // inspections (opt-in markers, deprecation, naming, etc.) emit a plain
+    // natural-language message without that prefix. Filtering on the prefix
+    // keeps the noisy lint findings out of `[diagnostics]` so the agent
+    // doesn't chase pre-existing IDE-only warnings.
+    val description = info.description ?: return false
+    return description.startsWith("[")
 }
 
 private fun reloadEditorDocumentFromDisk(vFile: VirtualFile) {

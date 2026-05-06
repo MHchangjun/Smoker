@@ -22,7 +22,7 @@ fun coreModule(root: Path, project: Project): Module = module {
     single {
         CodeSmellAgent(
             root.toAbsolutePath().normalize().toString(),
-            get(), get(), get(), get(), get(), get(), get(),
+            get(), get(), get(), get(), get(), get(),
             getOrNull<AgentActivityListener>() ?: AgentActivityListener.NONE,
         )
     }

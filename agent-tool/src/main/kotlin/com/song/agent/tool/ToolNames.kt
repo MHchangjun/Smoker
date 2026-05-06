@@ -8,6 +8,5 @@ object ToolNames {
     const val GLOB = "glob"
     const val GREP = "grep_search"
     const val TASK = "task"
-
     const val LSP = "lsp"
 }
