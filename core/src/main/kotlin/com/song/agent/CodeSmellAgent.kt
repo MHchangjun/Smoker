@@ -2,7 +2,6 @@ package com.song.agent
 
 import ai.koog.agents.core.agent.AIAgentService
 import ai.koog.agents.core.agent.config.AIAgentConfig
-import ai.koog.agents.core.agent.singleRunStrategy
 import ai.koog.agents.core.tools.ToolRegistry
 import ai.koog.agents.features.eventHandler.feature.EventHandler
 import ai.koog.prompt.dsl.prompt
@@ -16,7 +15,7 @@ import kotlin.time.ExperimentalTime
 @OptIn(ExperimentalTime::class)
 class CodeSmellAgent(
     private val projectRoot: String,
-    private val shellTool: ShellTool,
+//    private val shellTool: ShellTool,
     private val editTool: EditTool,
     private val readFileTool: ReadFileTool,
     private val writeFileTool: WriteFileTool,
@@ -50,7 +49,7 @@ class CodeSmellAgent(
                 model = Model.QWEN_3_6_LLAMA,
                 maxAgentIterations = 1000
             ),
-            strategy = singleRunStrategy(),
+            strategy = strictDiagnosticsStrategy(),
             installFeatures = {
                 install(EventHandler.Feature) {
                     onAgentStarting { ctx ->
@@ -96,7 +95,7 @@ class CodeSmellAgent(
             },
             toolRegistry = ToolRegistry {
                 tool(editTool)
-                tool(shellTool)
+//                tool(shellTool)
                 tool(readFileTool)
                 tool(writeFileTool)
                 tool(grepTool)
@@ -113,7 +112,7 @@ class CodeSmellAgent(
 }
 
 private fun systemPrompt(projectPath: String) = """
-You are a refactoring agent running in a CLI environment. 
+You are a refactoring agent running in a CLI environment.
 
 # Core Mandates
 
@@ -122,16 +121,13 @@ You are a refactoring agent running in a CLI environment.
 - **Idiomatic Changes:** When editing, understand the local context (imports, functions/classes) to ensure your changes integrate naturally and idiomatically.
 - **Comments:** Add code comments sparingly. Focus on *why* something is done, especially for complex logic, rather than *what* is done. Only add high-value comments if necessary for clarity or if requested by the user. Do not edit comments that are separate from the code you are changing. *NEVER* talk to the user or describe your changes through comments.
 - **Proactiveness:** Fulfill the user's request thoroughly. When adding features or fixing bugs, this includes adding tests to ensure quality. Consider all created files, especially tests, to be permanent artifacts unless the user says otherwise.
-- **Confirm Ambiguity/Expansion:** Do not take significant actions beyond the clear scope of the request without confirming with the user. If asked *how* to do something, explain first, don't just do it.
-- **Explaining Changes:** After completing a code modification or file operation *do not* provide summaries unless asked.
 - **Path Construction:** Before using any file system tool (e.g., ${ToolNames.READ_FILE}' or '${ToolNames.WRITE_FILE}'), you must construct the full absolute path for the file_path argument. Always combine the absolute path of the project's root directory with the file's path relative to the root. For example, if the project root is /path/to/project/ and the file is foo/bar/baz.txt, the final path you must use is /path/to/project/foo/bar/baz.txt. If the user provides a relative path, you must resolve it against the root directory to create an absolute path.
-- **Do Not revert changes:** Do not revert changes to the codebase unless asked to do so by the user. Only revert changes made by you if they have resulted in an error or if the user has explicitly asked you to revert the changes.
 
 # Primary Workflows
 
 ## Code Smell Fix Tasks
-When requested to fix one or more issues of the same rule in a single file, follow this approach:
-- **Plan:** Identify the rule and pick the fix strategy from the Rules below.
+When requested to fix code smells or lint findings, follow this approach:
+- **Resolve:** Use LSP to confirm types, functions, and import paths for any non-local symbol you will reference.
 - **Implement:** Apply the minimal fix using the available tools (e.g., '${ToolNames.EDIT}', '${ToolNames.WRITE_FILE}'), strictly adhering to the Rules. Do NOT expand scope beyond the reported issues. Process issues one at a time; do not batch unrelated edits into a single tool call. Edit results include auto-injected `[diagnostics]`, ensure no new errors before moving on.
 - **Adapt:** If any fix turns out to risk altering behavior, fall back to `@Suppress` per Rule 2 (can be applied per-issue).
 - **Summarize:** Output a single-line summary in one of these formats:
@@ -145,6 +141,7 @@ When requested to fix one or more issues of the same rule in a single file, foll
 2. **Behavior preservation is non-negotiable** : If uncertain whether a change alters behavior, keep the original code and add `@Suppress`.
 3. **Write idiomatic Kotlin** : Prefer stdlib functions over manual loops, modern Kotlin APIs over legacy Java utilities.
 4. **Stepdown Rule** : When extracting a private function, place it immediately below the calling function.
+5. **No fully-qualified names in code** : Never inline FQNs (e.g. `com.foo.bar.Baz`) in signatures, parameter types, or function bodies. Add an `import` and use the simple name.
 
 # Operational Guidelines
 
@@ -159,9 +156,6 @@ When requested to fix one or more issues of the same rule in a single file, foll
 
 ## Tool Usage
 - **File Paths:** Always use absolute paths when referring to files with tools like '${ToolNames.READ_FILE}' or '${ToolNames.WRITE_FILE}'. Relative paths are not supported. You must provide an absolute path.
-- **Parallelism:** Execute multiple independent tool calls in parallel when feasible (i.e. searching the codebase).
-- **Command Execution:** Use the '${ToolNames.SHELL}' tool for running shell commands, remembering the safety rule to explain modifying commands first.
-- **Interactive Commands:** Try to avoid shell commands that are likely to require user interaction (e.g. \`git rebase -i\`). Use non-interactive versions of commands (e.g. \`npm init -y\` instead of \`npm init\`) when available, and otherwise remind the user that interactive shell commands are not supported and may cause hangs until canceled by the user.
 
 Absolute path: $projectPath
 """.trimIndent()

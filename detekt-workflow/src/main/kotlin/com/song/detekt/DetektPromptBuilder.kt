@@ -12,7 +12,7 @@ class DetektPromptBuilder {
         val findingsHeader = if (plural) "**Findings:**" else "**Finding:**"
 
         return buildString {
-            appendLine("Fix the following detekt $issueWord in `$path`.")
+            appendLine("Fix the following code smell $issueWord in `$path`.")
             appendLine()
             policyFor(ruleId)?.let {
                 appendLine("**Fix policy:** $it")
