@@ -2,6 +2,7 @@ package com.song.agent.tool
 
 import ai.koog.agents.core.tools.Tool
 import ai.koog.agents.core.tools.annotations.LLMDescription
+import com.intellij.lang.LanguageDocumentation
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.fileEditor.FileDocumentManager
@@ -30,11 +31,12 @@ class LspTool(
     resultSerializer = Result.serializer(),
     name = ToolNames.LSP,
     description = """
-Language Server Protocol (LSP) tool for code intelligence: definitions, references, symbols.
+Language Server Protocol (LSP) tool for code intelligence: definitions, references, hover, symbols.
 
 Usage:
 - ALWAYS use LSP as the PRIMARY tool for code intelligence queries when available. Do NOT use grep_search or glob first.
-- goToDefinition, findReferences, goToImplementation require filePath + line + character (1-based).
+- goToDefinition, findReferences, goToImplementation, hover require filePath + line + character (1-based).
+- hover returns documentation/type info for the symbol at the given position (LSP textDocument/hover).
 - workspaceSymbol requires query (use when user asks "where is X defined?" without specifying a file).
 """.trimIndent()
 ) {
@@ -48,8 +50,6 @@ Usage:
         val line: Int? = null,
         @property:LLMDescription("1-based character/column number for the target location.")
         val character: Int? = null,
-        @property:LLMDescription("1-based end line number for range-based operations.")
-        val endLine: Int? = null,
         @property:LLMDescription("Include the declaration itself when looking up references.")
         val includeDeclaration: Boolean? = null,
         @property:LLMDescription("Symbol query for workspace symbol search.")
@@ -70,6 +70,8 @@ Usage:
         WORKSPACE_SYMBOL,
         @SerialName("goToImplementation")
         GO_TO_IMPLEMENTATION,
+        @SerialName("hover")
+        HOVER,
     }
 
     @Serializable
@@ -84,6 +86,7 @@ Usage:
                 LspOperation.DOCUMENT_SYMBOL -> documentSymbol(args, limit)
                 LspOperation.WORKSPACE_SYMBOL -> workspaceSymbol(args, limit)
                 LspOperation.GO_TO_IMPLEMENTATION -> goToImplementation(args, limit)
+                LspOperation.HOVER -> hover(args)
             }
         } catch (e: Exception) {
             Result("LSP ${args.operation.name} failed: ${e.message ?: "unknown error"}")
@@ -219,6 +222,42 @@ Usage:
             }.trim()
         )
     }
+
+    private fun hover(args: Args): Result {
+        requirePosition(args)
+        val content = ReadAction.compute<String?, Throwable> {
+            val ctx = openContext(args.filePath) ?: return@compute null
+            val offset = toOffset(ctx.document, args.line!!, args.character!!) ?: return@compute null
+            val originalElement = ctx.psiFile.findElementAt(offset) ?: return@compute null
+            val target = resolveTargets(ctx.psiFile, offset).firstOrNull()
+                ?: declarationAt(ctx.psiFile, offset)
+                ?: originalElement
+            val provider = LanguageDocumentation.INSTANCE.forLanguage(target.language)
+                ?: return@compute null
+            val quickInfo = runCatching { provider.getQuickNavigateInfo(target, originalElement) }.getOrNull()
+            val doc = runCatching { provider.generateDoc(target, originalElement) }.getOrNull()
+            listOfNotNull(quickInfo, doc)
+                .map(::stripHtml)
+                .filter { it.isNotBlank() }
+                .joinToString("\n\n")
+                .ifBlank { null }
+        }
+        return if (content == null) Result("No hover information found.")
+        else Result("Hover:\n$content")
+    }
+
+    private fun stripHtml(html: String): String =
+        html.replace(Regex("<br\\s*/?>", RegexOption.IGNORE_CASE), "\n")
+            .replace(Regex("</p>", RegexOption.IGNORE_CASE), "\n")
+            .replace(Regex("<[^>]+>"), "")
+            .replace("&nbsp;", " ")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&amp;", "&")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'")
+            .replace(Regex("\\n{3,}"), "\n\n")
+            .trim()
 
     private fun resolveTargets(psiFile: PsiFile, offset: Int): List<PsiElement> {
         val ref = psiFile.findReferenceAt(offset)
