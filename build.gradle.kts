@@ -46,6 +46,8 @@ dependencies {
 
     implementation(project(":core"))
     implementation(project(":detekt-workflow"))
+    implementation(project(":lint-workflow"))
+    implementation(project(":inspection-workflow"))
 
     testImplementation(kotlin("test"))
 }
@@ -86,4 +88,13 @@ tasks.named("prepareSandbox") {
                 logger.lifecycle("[smoker] wrote ${disabledFile.absolutePath}")
             }
     }
+}
+
+tasks.runIde {
+    maxHeapSize = "8g"
+    jvmArgs(
+        "-XX:+UseG1GC",
+        "-XX:+HeapDumpOnOutOfMemoryError",
+        "-XX:HeapDumpPath=${layout.buildDirectory.get()}/heap-dumps",
+    )
 }

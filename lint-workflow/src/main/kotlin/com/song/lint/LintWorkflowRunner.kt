@@ -1,4 +1,4 @@
-package com.song.detekt
+package com.song.lint
 
 import com.song.git.PullRequestPublishService
 import com.song.git.RepositorySyncService
@@ -6,21 +6,21 @@ import com.song.workflow.BranchService
 import com.song.workflow.BuildValidationService
 import java.io.File
 
-class DetektWorkflowRunner(
-    private val contextFactory: DetektRunContextFactory,
+class LintWorkflowRunner(
+    private val contextFactory: LintRunContextFactory,
     private val repositorySyncService: RepositorySyncService,
-    private val scanService: DetektScanService,
-    private val summaryPrinter: DetektSummaryPrinter,
+    private val scanService: LintScanService,
+    private val summaryPrinter: LintSummaryPrinter,
     private val branchService: BranchService,
-    private val fixService: DetektFixService,
+    private val fixService: LintFixService,
     private val buildValidationService: BuildValidationService,
     private val publishService: PullRequestPublishService,
 ) {
-    fun run(projectRoot: File, detektConfig: DetektConfigContext?) {
+    fun run(projectRoot: File) {
         val context = contextFactory.create(projectRoot)
 
         if (!repositorySyncService.syncDevelopLatest(context.projectRoot)) {
-            println("Repository sync failed. Skipping detekt run.")
+            println("Repository sync failed. Skipping lint run.")
             return
         }
 
@@ -37,13 +37,13 @@ class DetektWorkflowRunner(
             return
         }
 
-        val outcomes = fixService.fixAll(detektConfig, context, context.projectRoot)
+        val outcomes = fixService.fixAll(context, context.projectRoot)
         if (outcomes.isEmpty()) {
             println("No commits created. Skip push/PR.")
             return
         }
 
-        val compileTask = ":${context.module}:compilePlayStoreDebugKotlin"
+        val compileTask = ":app:compilePlayStoreDebugKotlin"
         if (!buildValidationService.verifyCompileOrRollback(context.projectRoot, outcomes, compileTask)) {
             println("Build validation failed. Skip push/PR.")
             return

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.song.sarif.Finding
 import com.song.sarif.SarifReport
+import com.song.workflow.runGradleTask
 import java.io.File
 import java.net.URI
 

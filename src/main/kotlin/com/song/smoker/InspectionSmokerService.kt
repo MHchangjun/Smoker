@@ -4,18 +4,14 @@ import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.song.agent.AgentActivityListener
 import com.song.agent.tool.EditObserver
-import com.song.detekt.DetektWorkflowRunner
-import com.song.detekt.loadDetektConfig
 import com.song.di.startAgentKoin
+import com.song.inspection.InspectionWorkflowRunner
 import com.song.workflow.WorkflowProgress
 import com.song.workflow.WorkflowProgressListener
 import org.koin.core.context.GlobalContext
 import java.nio.file.Paths
 
-// Workflow entry callable from the Smoker tool window. The IDE owns the Project
-// lifecycle (open/close, AGP sync, indexing) so this just waits for smart mode
-// as a safety net and runs the existing DetektWorkflowRunner.
-class SmokerService(
+class InspectionSmokerService(
     private val project: Project,
     private val log: (String) -> Unit,
     private val onWorkflowProgress: (WorkflowProgress) -> Unit = {},
@@ -28,7 +24,7 @@ class SmokerService(
         val rootPath = Paths.get(basePath).toAbsolutePath().normalize()
         onWorkflowProgress(WorkflowProgress())
 
-        log("Starting Smoker for ${project.name}")
+        log("Starting Smoker (inspection) for ${project.name}")
         log("Waiting for smart mode...")
         DumbService.getInstance(project).waitForSmartMode()
 
@@ -41,10 +37,9 @@ class SmokerService(
             editObserver,
         )
         try {
-            log("Running detekt workflow...")
-            val detektConfig = loadDetektConfig(rootPath)
-            val runner = koin.koin.get<DetektWorkflowRunner>()
-            runner.run(rootPath.toFile(), detektConfig)
+            log("Running IDE inspection workflow...")
+            val runner = koin.koin.get<InspectionWorkflowRunner>()
+            runner.run(rootPath.toFile())
             log("Done")
         } finally {
             onWorkflowProgress(WorkflowProgress())

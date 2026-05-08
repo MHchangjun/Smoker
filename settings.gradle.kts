@@ -6,5 +6,8 @@ plugins {
 
 include("agent-tool")
 include("core")
+include("workflow-core")
 include("detekt-workflow")
+include("lint-workflow")
+include("inspection-workflow")
 include("plugin-poc")

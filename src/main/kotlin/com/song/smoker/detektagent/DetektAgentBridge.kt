@@ -4,9 +4,9 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
 import com.song.agent.AgentActivityListener
-import com.song.detekt.DetektRuleProgress
-import com.song.detekt.PreviousFileOutcome
 import com.song.smoker.detektagent.model.AgentIdentity
+import com.song.workflow.PreviousFileOutcome
+import com.song.workflow.WorkflowProgress
 import com.song.smoker.detektagent.model.AgentSnapshot
 import com.song.smoker.detektagent.model.AgentStatus
 import com.song.smoker.detektagent.model.DetektAgentTopic
@@ -109,7 +109,7 @@ class DetektAgentBridge(private val project: Project) : AgentActivityListener {
         }
     }
 
-    fun onRuleProgress(progress: DetektRuleProgress) {
+    fun onWorkflowProgress(progress: WorkflowProgress) {
         synchronized(lock) {
             val now = Instant.now()
             lastEventAt = now

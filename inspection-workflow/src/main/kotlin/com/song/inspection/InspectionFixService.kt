@@ -1,4 +1,4 @@
-package com.song.detekt
+package com.song.inspection
 
 import com.song.agent.CodeSmellAgent
 import com.song.agent.EditorSessionManager
@@ -15,30 +15,21 @@ import java.io.File
 import java.time.Duration
 import java.time.Instant
 
-
-class DetektFixService(
-    private val promptBuilder: DetektPromptBuilder,
+class InspectionFixService(
+    private val promptBuilder: InspectionPromptBuilder,
     private val commitService: CommitService,
     private val gitCli: GitCli,
     private val agent: CodeSmellAgent,
-    private val scanService: DetektScanService,
     private val editorSessionManager: EditorSessionManager,
     private val progressListener: WorkflowProgressListener,
 ) {
     fun fixAll(
-        detektConfig: DetektConfigContext?,
-        context: DetektRunContext,
-        projectRoot: File
+        projectRoot: File,
+        findings: List<Finding>,
     ): List<CommitOutcome> {
-        if (detektConfig == null) {
-            println("Detekt config not found. Skipping agent execution.")
-            return emptyList()
-        }
-
         val outcomes = mutableListOf<CommitOutcome>()
         runBlocking {
-            val scan = scanService.scan(context)
-            val batch = nextRuleBatch(scan.findings) ?: return@runBlocking
+            val batch = nextRuleBatch(findings) ?: return@runBlocking
 
             println("Processing rule ${batch.ruleId} in ${batch.items.size} files ")
 
@@ -68,7 +59,7 @@ class DetektFixService(
 
                 println(
                     "  file ${fileIndex + 1}/${batch.items.size}: ${item.path} " +
-                            "(${item.findings.size} findings)"
+                        "(${item.findings.size} findings)"
                 )
 
                 val before = gitCli.captureDirtyFingerprints(projectRoot)
@@ -93,7 +84,6 @@ class DetektFixService(
                     durationMs = Duration.between(fileStart, Instant.now()).toMillis(),
                 )
             }
-            // Surface the final file's outcome even though there's no further file to start.
             if (lastOutcome != null) {
                 progressListener.onWorkflowProgress(
                     WorkflowProgress(
@@ -113,9 +103,7 @@ class DetektFixService(
     }
 
     private fun nextRuleBatch(findings: List<Finding>): RuleBatch? {
-        val localFindings = findings
-            .filter { !it.absolutePath.isNullOrBlank() }
-            .filter { !isComposeFile(it.absolutePath!!) }
+        val localFindings = findings.filter { !it.absolutePath.isNullOrBlank() }
 
         val firstRuleId = localFindings.firstOrNull()?.ruleId ?: return null
         val items = localFindings
@@ -126,15 +114,6 @@ class DetektFixService(
             }
 
         return RuleBatch(ruleId = firstRuleId, items = items)
-    }
-
-    private fun isComposeFile(path: String): Boolean {
-        val file = File(path)
-        if (!file.isFile) return false
-        return runCatching { file.readText() }
-            .getOrNull()
-            ?.contains("@Composable")
-            ?: false
     }
 
     private data class RuleBatch(

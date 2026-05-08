@@ -1,4 +1,4 @@
-package com.song.detekt
+package com.song.inspection
 
 import com.song.git.PullRequestPublishService
 import com.song.git.RepositorySyncService
@@ -6,21 +6,21 @@ import com.song.workflow.BranchService
 import com.song.workflow.BuildValidationService
 import java.io.File
 
-class DetektWorkflowRunner(
-    private val contextFactory: DetektRunContextFactory,
+class InspectionWorkflowRunner(
+    private val contextFactory: InspectionRunContextFactory,
     private val repositorySyncService: RepositorySyncService,
-    private val scanService: DetektScanService,
-    private val summaryPrinter: DetektSummaryPrinter,
+    private val scanService: InspectionScanService,
+    private val summaryPrinter: InspectionSummaryPrinter,
     private val branchService: BranchService,
-    private val fixService: DetektFixService,
+    private val fixService: InspectionFixService,
     private val buildValidationService: BuildValidationService,
     private val publishService: PullRequestPublishService,
 ) {
-    fun run(projectRoot: File, detektConfig: DetektConfigContext?) {
+    fun run(projectRoot: File) {
         val context = contextFactory.create(projectRoot)
 
         if (!repositorySyncService.syncDevelopLatest(context.projectRoot)) {
-            println("Repository sync failed. Skipping detekt run.")
+            println("Repository sync failed. Skipping inspection run.")
             return
         }
 
@@ -37,7 +37,7 @@ class DetektWorkflowRunner(
             return
         }
 
-        val outcomes = fixService.fixAll(detektConfig, context, context.projectRoot)
+        val outcomes = fixService.fixAll(context.projectRoot, scan.findings)
         if (outcomes.isEmpty()) {
             println("No commits created. Skip push/PR.")
             return
