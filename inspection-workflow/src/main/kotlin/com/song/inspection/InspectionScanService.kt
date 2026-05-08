@@ -4,7 +4,6 @@ import com.intellij.codeInspection.GlobalInspectionContext
 import com.intellij.codeInspection.InspectionEngine
 import com.intellij.codeInspection.InspectionManager
 import com.intellij.codeInspection.ProblemDescriptor
-import com.intellij.codeInspection.ex.EntryPointsManagerBase
 import com.intellij.codeInspection.ex.LocalInspectionToolWrapper
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.editor.Document
@@ -124,6 +123,7 @@ class InspectionScanService(
                     && vf.extension == "kt"
                     && fileIndex.isInContent(vf)
                     && !fileIndex.isExcluded(vf)
+                    && !fileIndex.isInTestSourceContent(vf)
                 ) {
                     out += vf
                 }
@@ -203,15 +203,7 @@ class InspectionScanService(
             .trim()
 
     private fun registerEntryPointAnnotations() {
-        val mgr = EntryPointsManagerBase.getInstance(project)
-        val current = mgr.ADDITIONAL_ANNOTATIONS
-        val toAdd = ENTRY_POINT_ANNOTATIONS.filter { it !in current }
-        if (toAdd.isEmpty()) {
-            println("[inspection-scan] entry point annotations already registered")
-            return
-        }
-        toAdd.forEach { current.add(it) }
-        println("[inspection-scan] registered entry point annotations: $toAdd")
+        InspectionEntryPoints.register(project)
     }
 
     private fun logException(stage: String, t: Throwable) {
@@ -219,28 +211,5 @@ class InspectionScanService(
         t.printStackTrace(PrintWriter(sw))
         println("[inspection-scan] EXCEPTION at $stage: ${t.javaClass.name}: ${t.message}")
         println(sw.toString().trimEnd())
-    }
-
-    companion object {
-        private val ENTRY_POINT_ANNOTATIONS: List<String> = listOf(
-            // Dagger / Hilt
-            "dagger.Module",
-            "dagger.Provides",
-            "dagger.Binds",
-            "dagger.BindsInstance",
-            "dagger.BindsOptionalOf",
-            "dagger.multibindings.IntoSet",
-            "dagger.multibindings.IntoMap",
-            "dagger.hilt.InstallIn",
-            "dagger.hilt.EntryPoint",
-            "dagger.hilt.android.AndroidEntryPoint",
-            "dagger.hilt.android.HiltAndroidApp",
-            "dagger.hilt.android.lifecycle.HiltViewModel",
-            // javax.inject
-            "javax.inject.Inject",
-            "javax.inject.Qualifier",
-            "javax.inject.Scope",
-            "javax.inject.Singleton",
-        )
     }
 }

@@ -5,8 +5,9 @@
     <description><![CDATA[
         Code-smell refactoring agent triggered from a side tool window.
         Open an Android project, expand the Smoker tool window on the right,
-        click "Run Smoker" to scan with detekt or "Run Lint" to scan with
-        Android Lint, then apply LLM-driven fixes.
+        click "Run Smoker" to: pull develop → create a new branch → apply
+        IDE inspection quick-fixes → apply detekt quick-fixes → run the
+        Android Lint LLM agent → push and open a PR.
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>

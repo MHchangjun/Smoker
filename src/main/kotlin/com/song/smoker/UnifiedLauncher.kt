@@ -16,7 +16,7 @@ import kotlinx.coroutines.runBlocking
 import java.util.concurrent.atomic.AtomicBoolean
 
 @Service(Service.Level.PROJECT)
-class InspectionLauncher(private val project: Project) {
+class UnifiedLauncher(private val project: Project) {
 
     data class Hooks(
         val log: (String) -> Unit = {},
@@ -30,7 +30,6 @@ class InspectionLauncher(private val project: Project) {
 
     fun isRunning(): Boolean = running.get()
 
-    /** Returns false if a run is already in progress. */
     fun start(hooks: Hooks = Hooks()): Boolean {
         if (!running.compareAndSet(false, true)) return false
 
@@ -49,13 +48,13 @@ class InspectionLauncher(private val project: Project) {
             bridge.recordDiff(path, removed, added)
         }
 
-        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Smoker (Inspection)", true) {
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Smoker", true) {
             private var failure: Throwable? = null
 
             override fun run(indicator: ProgressIndicator) {
                 try {
                     runBlocking {
-                        InspectionSmokerService(
+                        UnifiedSmokerService(
                             project,
                             hooks.log,
                             composedProgress,
@@ -85,4 +84,14 @@ class InspectionLauncher(private val project: Project) {
             project.messageBus.syncPublisher(SmokerLauncherTopic.TOPIC).onStateChanged(running.get())
         }
     }
+}
+
+fun interface SmokerLauncherListener {
+    fun onStateChanged(running: Boolean)
+}
+
+object SmokerLauncherTopic {
+    @JvmField
+    val TOPIC: com.intellij.util.messages.Topic<SmokerLauncherListener> =
+        com.intellij.util.messages.Topic.create("Smoker.LauncherState", SmokerLauncherListener::class.java)
 }

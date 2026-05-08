@@ -39,40 +39,21 @@ class InspectionPromptBuilder {
 
     private fun policyFor(ruleId: String): String? = when (ruleId) {
         "UnusedSymbol" -> """
-            Delete the declaration only after confirming it is genuinely unreachable. This
-            inspection has known false positives from XML references, annotation processors,
-            and cross-module callers.
+Delete the declaration. The IDE inspection has already excluded all standard exemptions — if the symbol is in the findings, it is unused.
 
-            ### Verify (in order; stop on any keep signal)
+### Verify
 
-            1. `lsp findReferences` on the symbol with `includeDeclaration: false`.
-               Any result → keep.
+1. `lsp findReferences` on the symbol with `includeDeclaration: false`.
+   - 0 results → proceed.
+   - ≥1 result → keep.
+2. Grep the repo for the symbol name in non-Kotlin sources (XML, resource files, Gradle scripts).
+   - Any match → keep.
+   - No match → proceed.
 
-            2. Quick signal check on the declaration itself — if any of these, keep:
-               - Annotation implying runtime/external use: `@Keep`, `@Inject`, `@Provides`,
-                 `@Binds`, `@Module`, `@HiltViewModel`, `@AndroidEntryPoint`, `@Serializable`,
-                 `@SerializedName`, `@Json`, `@JvmField`, `@JvmStatic`, `@JvmName`,
-                 `@VisibleForTesting`, `@Composable` with `@Preview`, or any KSP/kapt
-                 annotation used in this project.
-               - `override`, `operator`, satisfies an interface/abstract member, or is a
-                 sealed subtype.
-               - Entry point (manifest-declared, top-level `main`, JNI `external`).
-               - `public`/`internal` declaration in a module consumed by other modules
-                 (LSP index may not span all callers).
+### Action
 
-            3. `grep` for the symbol's simple name in non-Kotlin sources only:
-               `**/*.xml`, `**/*.gradle{,.kts}`, `**/*.toml`, `**/proguard-*.pro`.
-               Any hit that plausibly resolves to this symbol → keep.
-
-            ### Action
-
-            - All three pass → delete the declaration, remove imports that become unused,
-              delete the file if it becomes empty.
-            - Anything uncertain → skip the finding. Do NOT add `@Suppress`.
-
-            ### After editing
-
-            Re-run LSP diagnostics on the edited file. Diagnostic set must be empty.
+- Both checks pass → delete the declaration, remove imports that become unused, delete the file if it becomes empty.
+- Otherwise → skip.
         """.trimIndent()
         else -> null
     }
