@@ -4,23 +4,18 @@ import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.song.agent.AgentActivityListener
 import com.song.agent.tool.EditObserver
-import com.song.detekt.DetektFixService
-import com.song.detekt.DetektRunContextFactory
-import com.song.detekt.loadDetektConfig
+import com.song.detekt.DetektPhase
 import com.song.di.startAgentKoin
 import com.song.git.GitCli
 import com.song.git.PullRequestPublishService
 import com.song.git.RepositorySyncService
-import com.song.inspection.InspectionFixService
-import com.song.inspection.InspectionRunContextFactory
-import com.song.inspection.InspectionScanService
-import com.song.inspection.InspectionSummaryPrinter
-import com.song.lint.LintFixService
-import com.song.lint.LintRunContextFactory
-import com.song.lint.LintScanService
+import com.song.inspection.InspectionPhase
+import com.song.lint.LintPhase
 import com.song.workflow.UnifiedBranchService
+import com.song.workflow.WorkflowPhase
 import com.song.workflow.WorkflowProgress
 import com.song.workflow.WorkflowProgressListener
+import org.koin.core.KoinApplication
 import org.koin.core.context.GlobalContext
 import java.nio.file.Paths
 
@@ -81,20 +76,11 @@ class UnifiedSmokerService(
             }
             logBoth("[init] on branch: $branch")
 
-            // Phase 1: IDE Inspect (LLM)
-            val inspectStart = System.currentTimeMillis()
-            runInspectPhase(koin, rootFile)
-            logBoth("[inspect] phase end elapsedMs=${System.currentTimeMillis() - inspectStart}")
-
-            // Phase 2: Detekt (LLM)
-            val detektStart = System.currentTimeMillis()
-            runDetektPhase(koin, rootPath.toAbsolutePath(), rootFile)
-            logBoth("[detekt] phase end elapsedMs=${System.currentTimeMillis() - detektStart}")
-
-            // Phase 3: Android Lint (LLM)
-            val lintStart = System.currentTimeMillis()
-            runLintPhase(koin, rootFile)
-            logBoth("[lint] phase end elapsedMs=${System.currentTimeMillis() - lintStart}")
+            for (phase in phases(koin)) {
+                val phaseStart = System.currentTimeMillis()
+                phase.run(rootFile, ::logBoth)
+                logBoth("[${phase.name}] phase end elapsedMs=${System.currentTimeMillis() - phaseStart}")
+            }
 
             logBoth("[publish] pushing branch and creating PR")
             val pushed = publish.pushAndCreatePr(rootFile, baseBranch = "develop")
@@ -107,53 +93,11 @@ class UnifiedSmokerService(
         }
     }
 
-    private fun runInspectPhase(koin: org.koin.core.KoinApplication, rootFile: java.io.File) {
-        val ctxFactory = koin.koin.get<InspectionRunContextFactory>()
-        val scan = koin.koin.get<InspectionScanService>()
-        val fix = koin.koin.get<InspectionFixService>()
-        val printer = koin.koin.get<InspectionSummaryPrinter>()
-        val ctx = ctxFactory.create(rootFile)
-        logBoth("[inspect] phase begin ids=${ctx.inspectionIds.joinToString(",")}")
-        val findings = scan.scan(ctx).findings
-        printer.print(ctx, findings)
-        if (findings.isEmpty()) {
-            logBoth("[inspect] no findings, skipping LLM phase")
-            return
-        }
-        fix.fixAll(rootFile, findings)
-    }
-
-    private fun runDetektPhase(
-        koin: org.koin.core.KoinApplication,
-        rootPath: java.nio.file.Path,
-        rootFile: java.io.File,
-    ) {
-        val ctxFactory = koin.koin.get<DetektRunContextFactory>()
-        val fix = koin.koin.get<DetektFixService>()
-        val ctx = ctxFactory.create(rootFile)
-        val detektConfig = loadDetektConfig(rootPath)
-        if (detektConfig == null) {
-            logBoth("[detekt] detekt config not found, skipping LLM phase")
-            return
-        }
-        logBoth("[detekt] phase begin task=${ctx.task}")
-        fix.fixAll(detektConfig, ctx, rootFile)
-    }
-
-    private fun runLintPhase(koin: org.koin.core.KoinApplication, rootFile: java.io.File) {
-        val ctxFactory = koin.koin.get<LintRunContextFactory>()
-        val scan = koin.koin.get<LintScanService>()
-        val fix = koin.koin.get<LintFixService>()
-        val ctx = ctxFactory.create(rootFile)
-        logBoth("[lint] running scan (gradle ${ctx.task})")
-        val findings = scan.scan(ctx).findings
-        logBoth("[lint] scan complete findings=${findings.size}")
-        if (findings.isEmpty()) {
-            logBoth("[lint] no findings, skipping LLM phase")
-            return
-        }
-        fix.fixAll(ctx, rootFile)
-    }
+    private fun phases(koin: KoinApplication): List<WorkflowPhase> = listOf(
+        koin.koin.get<InspectionPhase>(),
+        koin.koin.get<DetektPhase>(),
+        koin.koin.get<LintPhase>(),
+    )
 
     private fun logBoth(msg: String) {
         println(msg)
