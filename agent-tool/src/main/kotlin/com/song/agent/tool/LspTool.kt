@@ -125,7 +125,8 @@ Usage:
                 locationOf(it.element, it.rangeInElement.startOffset)
             }
             val all = if (includeDeclaration) listOfNotNull(locationOf(target)) + refs else refs
-            all.distinctBy { Triple(it.path, it.line, it.col) }
+            all.filterNot { isGeneratedPath(it.path) }
+                .distinctBy { Triple(it.path, it.line, it.col) }
         }
         if (locations.isEmpty()) return Result("No references found.")
         return Result(
@@ -244,6 +245,11 @@ Usage:
         }
         return if (content == null) Result("No hover information found.")
         else Result("Hover:\n$content")
+    }
+
+    private fun isGeneratedPath(path: String): Boolean {
+        val normalized = path.replace('\\', '/')
+        return GENERATED_PATH_SEGMENTS.any { normalized.contains(it) }
     }
 
     private fun stripHtml(html: String): String =
@@ -399,5 +405,11 @@ Usage:
 
     companion object {
         private const val DEFAULT_LIMIT = 20
+        private val GENERATED_PATH_SEGMENTS = listOf(
+            "/build/",
+            "/generated/",
+            "/.gradle/",
+            "/out/",
+        )
     }
 }
