@@ -20,7 +20,12 @@ class InspectionRunContextFactory {
     companion object {
         val DEFAULT_INSPECTION_IDS: List<String> = listOf(
             "UnusedSymbol",
-            "AndroidLintUnusedResources"
+            "UnusedVariable",
+            "UnusedExpression",
+            "CanBeVal",
+            "RedundantSemicolon",
+            "RedundantUnitReturnType",
+            "RemoveEmptyClassBody",
         )
     }
 }
