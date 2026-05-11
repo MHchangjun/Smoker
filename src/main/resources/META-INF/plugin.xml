@@ -19,6 +19,7 @@
                     anchor="right"
                     secondary="false"
                     factoryClass="com.song.smoker.detektagent.ui.DetektAgentToolWindowFactory"/>
+        <postStartupActivity implementation="com.song.smoker.daemon.SmokerHttpListenerActivity"/>
     </extensions>
 
     <extensions defaultExtensionNs="org.jetbrains.kotlin">
