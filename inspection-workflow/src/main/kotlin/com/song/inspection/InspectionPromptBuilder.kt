@@ -37,8 +37,10 @@ class InspectionPromptBuilder {
         }.trimEnd()
     }
 
-    private fun policyFor(ruleId: String): String? = when (ruleId) {
-        "UnusedSymbol" -> """
+    private fun policyFor(ruleId: String): String? {
+        val rule = InspectionRule.fromId(ruleId) ?: return null
+        return when (rule) {
+            InspectionRule.UNUSED_SYMBOL -> """
 Delete the declaration. The IDE inspection has already excluded all standard exemptions — if the symbol is in the findings, it is unused.
 
 ### Verify
@@ -54,8 +56,72 @@ Delete the declaration. The IDE inspection has already excluded all standard exe
 
 - Both checks pass → delete the declaration, remove imports that become unused, delete the file if it becomes empty.
 - Otherwise → skip.
-        """.trimIndent()
-        else -> null
+            """.trimIndent()
+            InspectionRule.UNUSED_VARIABLE -> """
+Delete the unused local variable, parameter, or property only when doing so does not change side effects.
+
+### Verify
+
+1. If the initializer calls a function, reads mutable state, allocates an object with side effects, or performs I/O, keep the expression or rewrite it so side effects remain.
+2. If the variable is part of a public/callback signature, skip.
+
+### Action
+
+- No side effects and not API-significant → remove the declaration.
+- Side effects exist → remove only the unused binding and preserve the expression if needed.
+            """.trimIndent()
+            InspectionRule.UNUSED_EXPRESSION -> """
+Remove the unused expression only when it has no side effects.
+
+### Verify
+
+1. Pure literal, name reference, or simple calculation → safe to remove.
+2. Function calls, property accessors, assignments, increments, object construction, logging, metrics, or I/O may have side effects → skip unless the intended safe rewrite is obvious.
+
+### Action
+
+- Safe expression → delete it.
+- Unclear side effects → skip.
+            """.trimIndent()
+            InspectionRule.CAN_BE_VAL -> """
+Change `var` to `val`.
+
+### Verify
+
+1. Confirm the inspection points to a variable that is not reassigned.
+2. Do not change generated code or public API solely for style if the file indicates code generation.
+
+### Action
+
+- Replace `var` with `val`.
+            """.trimIndent()
+            InspectionRule.REDUNDANT_SEMICOLON -> """
+Remove the redundant semicolon.
+
+### Action
+
+- Delete only the semicolon reported by the inspection.
+            """.trimIndent()
+            InspectionRule.REDUNDANT_UNIT_RETURN_TYPE -> """
+Remove the explicit `: Unit` return type.
+
+### Verify
+
+1. Keep explicit `: Unit` in public API declarations if the surrounding style intentionally documents API shape.
+2. Otherwise remove it.
+
+### Action
+
+- Delete `: Unit` and leave the body unchanged.
+            """.trimIndent()
+            InspectionRule.REMOVE_EMPTY_CLASS_BODY -> """
+Remove the empty class body.
+
+### Action
+
+- Replace an empty `{}` body with no body.
+            """.trimIndent()
+        }
     }
 
     private fun extractCodeSnippet(fileLines: List<String>, finding: Finding): String {

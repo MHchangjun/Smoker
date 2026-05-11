@@ -18,14 +18,6 @@ class InspectionRunContextFactory {
     }
 
     companion object {
-        val DEFAULT_INSPECTION_IDS: List<String> = listOf(
-            "UnusedSymbol",
-            "UnusedVariable",
-            "UnusedExpression",
-            "CanBeVal",
-            "RedundantSemicolon",
-            "RedundantUnitReturnType",
-            "RemoveEmptyClassBody",
-        )
+        val DEFAULT_INSPECTION_IDS: List<String> = InspectionRule.ALL_IDS
     }
 }
