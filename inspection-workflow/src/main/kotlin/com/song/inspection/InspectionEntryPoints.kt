@@ -45,6 +45,8 @@ object InspectionEntryPoints {
         "androidx.room.TypeConverters",
         // Compose preview / runtime
         "androidx.compose.ui.tooling.preview.Preview",
+        // Android WebView — methods invoked from JS
+        "android.webkit.JavascriptInterface",
     )
 
     fun register(project: Project) {
