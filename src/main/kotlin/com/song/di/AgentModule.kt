@@ -6,6 +6,7 @@ import com.song.agent.tool.EditObserver
 import com.song.detekt.di.detektModule
 import com.song.inspection.di.inspectionModule
 import com.song.lint.di.lintModule
+import com.song.screen.di.screenIndexModule
 import com.song.workflow.WorkflowProgressListener
 import org.koin.core.KoinApplication
 import org.koin.core.context.startKoin
@@ -24,6 +25,7 @@ fun agentModule(
     includes(detektModule())
     includes(lintModule())
     includes(inspectionModule())
+    includes(screenIndexModule())
     single<WorkflowProgressListener> { progressListener }
     single<AgentActivityListener> { activityListener }
     single<EditObserver> { editObserver }

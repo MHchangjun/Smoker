@@ -48,6 +48,7 @@ dependencies {
     implementation(project(":detekt-workflow"))
     implementation(project(":lint-workflow"))
     implementation(project(":inspection-workflow"))
+    implementation(project(":screen-index"))
 
     testImplementation(kotlin("test"))
 }

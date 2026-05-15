@@ -29,7 +29,11 @@ class LintFixAgent(
     }
 
     private fun buildAgentService(): AIAgentService<String, String, *> {
-        val endpoint = System.getenv("SMOKER_LLM_ENDPOINT") ?: "http://100.99.171.25:8080"
+        val settings = SmokerLlmSettings.getInstance()
+        val endpoint = settings.endpoint.ifBlank {
+            System.getenv("SMOKER_LLM_ENDPOINT") ?: "http://100.99.171.25:8080"
+        }
+        val modelId = settings.modelId.ifBlank { "qwen3.6" }
         val executor = MultiLLMPromptExecutor(
             OpenAILLMClient(
                 "",
@@ -45,7 +49,7 @@ class LintFixAgent(
                 ) {
                     system(systemPrompt(projectRoot))
                 },
-                model = Model.QWEN_3_6_LLAMA,
+                model = Model.openAi(modelId),
                 maxAgentIterations = 1000
             ),
             strategy = strictDiagnosticsStrategy(),

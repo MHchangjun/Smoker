@@ -11,6 +11,7 @@ import ai.koog.prompt.executor.clients.openai.OpenAILLMClient
 import ai.koog.prompt.executor.llms.SingleLLMPromptExecutor
 import ai.koog.prompt.params.LLMParams
 import com.song.agent.Model
+import com.song.agent.SmokerLlmSettings
 import com.song.agent.tool.GlobTool
 import com.song.agent.tool.GrepTool
 import com.song.agent.tool.ReadFileTool
@@ -23,18 +24,23 @@ fun getSubAgentDefinitions(
     globTool: GlobTool,
     readFileTool: ReadFileTool,
 ): List<TaskSubagentDefinition> {
+    val settings = SmokerLlmSettings.getInstance()
+    val endpoint = settings.endpoint.ifBlank {
+        System.getenv("SMOKER_LLM_ENDPOINT") ?: "http://172.16.20.134:8080"
+    }
+    val modelId = settings.modelId.ifBlank { "qwen3.6" }
     val service = AIAgentService(
         promptExecutor = SingleLLMPromptExecutor(
             OpenAILLMClient(
                 "",
-                OpenAIClientSettings("http://172.16.20.134:8080")
+                OpenAIClientSettings(endpoint)
             )
         ),
         agentConfig = AIAgentConfig(
             prompt = prompt("builtin-task-agent", LLMParams(temperature = 0.6)) {
                 system(SYSTEM_PROMPT)
             },
-            model = Model.QWEN_3_6_LLAMA,
+            model = Model.openAi(modelId),
             maxAgentIterations = 80
         ),
         strategy = singleRunStrategy(),

@@ -8,6 +8,7 @@ import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.song.agent.AgentActivityListener
+import com.song.agent.SmokerLlmSettings
 import com.song.agent.tool.EditObserver
 import com.song.smoker.detektagent.DetektAgentBridge
 import com.song.smoker.detektagent.composeActivityListeners
@@ -31,6 +32,14 @@ class UnifiedLauncher(private val project: Project) {
     fun isRunning(): Boolean = running.get()
 
     fun start(hooks: Hooks = Hooks()): Boolean {
+        if (running.get()) return false
+        if (!SmokerLlmSettings.getInstance().isConfigured()) {
+            // Only the GUI Run button (EDT) can prompt for settings; headless callers
+            // (e.g. SmokerHttpListener) must configure them first via the tool window.
+            if (!ApplicationManager.getApplication().isDispatchThread) return false
+            val ok = SmokerLlmSettingsDialog(project).showAndGet()
+            if (!ok) return false
+        }
         if (!running.compareAndSet(false, true)) return false
 
         val bridge = project.service<DetektAgentBridge>()

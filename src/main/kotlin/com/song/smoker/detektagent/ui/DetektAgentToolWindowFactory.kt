@@ -11,6 +11,7 @@ import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.ui.content.ContentFactory
 import com.song.smoker.UnifiedLauncher
+import com.song.smoker.screenindex.BuildScreenIndexAction
 
 class DetektAgentToolWindowFactory : ToolWindowFactory, DumbAware {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
@@ -18,7 +19,7 @@ class DetektAgentToolWindowFactory : ToolWindowFactory, DumbAware {
         val content = ContentFactory.getInstance().createContent(panel, "", false)
         content.isCloseable = false
         toolWindow.contentManager.addContent(content)
-        toolWindow.setTitleActions(listOf(RunSmokerAction()))
+        toolWindow.setTitleActions(listOf(RunSmokerAction(), BuildScreenIndexAction()))
     }
 
     override fun shouldBeAvailable(project: Project): Boolean = true
