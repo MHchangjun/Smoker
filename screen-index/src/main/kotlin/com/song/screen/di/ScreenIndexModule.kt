@@ -5,6 +5,9 @@ import com.song.screen.ClassTargetResolver
 import com.song.screen.ScreenIndexService
 import com.song.screen.ScreenIndexStore
 import com.song.screen.activity.ActivityRootResolver
+import com.song.screen.datasource.UiDataSourceScanService
+import com.song.screen.datasource.UiDataSourceScanStore
+import com.song.screen.datasource.UiDataSourceScanner
 import com.song.screen.host.HostedChildExtractor
 import com.song.screen.host.LayoutXmlHostScanner
 import com.song.screen.host.NavGraphHostScanner
@@ -28,4 +31,8 @@ fun screenIndexModule(): Module = module {
 
     single { ScreenIndexStore() }
     single { ScreenIndexService(get<Project>(), get(), get(), get()) }
+
+    single { UiDataSourceScanStore() }
+    single { UiDataSourceScanner(get<Project>(), get()) }
+    single { UiDataSourceScanService(get<Project>(), get(), get()) }
 }
