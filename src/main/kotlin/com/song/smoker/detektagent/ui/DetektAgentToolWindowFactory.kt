@@ -10,8 +10,8 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.ui.content.ContentFactory
+import com.song.smoker.SmokerLlmSettingsDialog
 import com.song.smoker.UnifiedLauncher
-import com.song.smoker.screenindex.BuildScreenIndexAction
 import com.song.smoker.screenindex.ScanUiDataSourceAction
 
 class DetektAgentToolWindowFactory : ToolWindowFactory, DumbAware {
@@ -20,7 +20,13 @@ class DetektAgentToolWindowFactory : ToolWindowFactory, DumbAware {
         val content = ContentFactory.getInstance().createContent(panel, "", false)
         content.isCloseable = false
         toolWindow.contentManager.addContent(content)
-        toolWindow.setTitleActions(listOf(RunSmokerAction(), BuildScreenIndexAction(), ScanUiDataSourceAction()))
+        toolWindow.setTitleActions(
+            listOf(
+                RunSmokerAction(),
+                ScanUiDataSourceAction(),
+                SmokerSettingsAction(),
+            ),
+        )
     }
 
     override fun shouldBeAvailable(project: Project): Boolean = true
@@ -47,5 +53,20 @@ private class RunSmokerAction :
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         project.service<UnifiedLauncher>().start()
+    }
+}
+
+private class SmokerSettingsAction :
+    AnAction(
+        "Smoker Settings",
+        "Configure Smoker LLM endpoint and model",
+        AllIcons.General.Settings,
+    ),
+    DumbAware {
+
+    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+
+    override fun actionPerformed(e: AnActionEvent) {
+        SmokerLlmSettingsDialog(e.project).showAndGet()
     }
 }

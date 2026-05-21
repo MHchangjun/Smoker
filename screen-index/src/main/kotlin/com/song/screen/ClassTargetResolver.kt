@@ -1,5 +1,6 @@
 package com.song.screen
 
+import com.intellij.openapi.project.IndexNotReadyException
 import com.intellij.openapi.project.Project
 import com.intellij.psi.JavaPsiFacade
 import com.intellij.psi.PsiClass
@@ -18,7 +19,11 @@ class ClassTargetResolver(private val project: Project) {
 
     fun resolveClass(fqn: String): ClassTarget.ClassRef? {
         val scope = GlobalSearchScope.allScope(project)
-        val psiClass = JavaPsiFacade.getInstance(project).findClass(fqn, scope) ?: return null
+        val psiClass = try {
+            JavaPsiFacade.getInstance(project).findClass(fqn, scope)
+        } catch (_: IndexNotReadyException) {
+            return null
+        } ?: return null
         // K2 wraps Kotlin classes in a light class whose containingFile may not be
         // a KtFile directly. Re-derive via the VFS path so visitors always see source-level PSI.
         val vf = psiClass.containingFile?.virtualFile
@@ -39,25 +44,28 @@ class ClassTargetResolver(private val project: Project) {
         )
     }
 
-    fun isActivityClass(psi: PsiClass): Boolean {
-        for (base in ACTIVITY_BASES) {
-            if (InheritanceUtil.isInheritor(psi, base)) return true
-        }
+    fun isActivityClass(psi: PsiClass): Boolean = inheritsAny(psi, ACTIVITY_BASES)
+    fun isDialogClass(psi: PsiClass): Boolean = inheritsAny(psi, DIALOG_BASES)
+    fun isFragmentLike(psi: PsiClass): Boolean = inheritsAny(psi, FRAGMENT_BASES)
+    fun isApplicationClass(psi: PsiClass): Boolean = inheritsAny(psi, APPLICATION_BASES)
+
+    /**
+     * Generated boilerplate that shouldn't be treated as a real screen:
+     *  - Hilt @AndroidEntryPoint wrapper classes (`Hilt_FooFragment`, `Hilt_FooActivity`)
+     *  - anything sitting under a `build/generated/` directory (kapt / ksp / dagger / hilt output)
+     */
+    fun isGeneratedClass(psi: PsiClass): Boolean {
+        val name = psi.name.orEmpty()
+        if (name.startsWith("Hilt_")) return true
+        val path = psi.containingFile?.virtualFile?.path.orEmpty()
+        if (path.contains("/build/generated/")) return true
         return false
     }
 
-    fun isDialogClass(psi: PsiClass): Boolean {
-        for (base in DIALOG_BASES) {
-            if (InheritanceUtil.isInheritor(psi, base)) return true
-        }
-        return false
-    }
-
-    fun isFragmentLike(psi: PsiClass): Boolean {
-        for (base in FRAGMENT_BASES) {
-            if (InheritanceUtil.isInheritor(psi, base)) return true
-        }
-        return false
+    private fun inheritsAny(psi: PsiClass, bases: List<String>): Boolean = try {
+        bases.any { InheritanceUtil.isInheritor(psi, it) }
+    } catch (_: IndexNotReadyException) {
+        false
     }
 
     private fun findKtClassOrObject(ktFile: KtFile?, fqn: String): KtClassOrObject? {
@@ -83,6 +91,9 @@ class ClassTargetResolver(private val project: Project) {
             "androidx.fragment.app.Fragment",
             "android.app.Fragment",
             "androidx.leanback.app.Fragment",
+        )
+        val APPLICATION_BASES = listOf(
+            "android.app.Application",
         )
     }
 }

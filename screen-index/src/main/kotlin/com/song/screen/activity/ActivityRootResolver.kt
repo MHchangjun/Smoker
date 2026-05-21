@@ -47,6 +47,7 @@ class ActivityRootResolver(
         val byFqn = LinkedHashMap<String, ActivityRoot>()
         for ((fqn, manifestPath, label) in fromManifests) {
             val target = classTargetResolver.resolveClass(fqn) ?: continue
+            if (classTargetResolver.isGeneratedClass(target.psiClass)) continue
             byFqn[fqn] = ActivityRoot(target, manifestPath, label)
         }
         for (fqn in subclassFqns) {
@@ -114,6 +115,7 @@ class ActivityRootResolver(
             val base = facade.findClass(baseFqn, GlobalSearchScope.allScope(project)) ?: continue
             for (sub in ClassInheritorsSearch.search(base, scope, true).findAll()) {
                 if (isExcluded(sub.containingFile?.virtualFile, excluded)) continue
+                if (classTargetResolver.isGeneratedClass(sub)) continue
                 sub.qualifiedName?.let { out += it }
             }
         }
