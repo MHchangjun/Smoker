@@ -12,6 +12,7 @@ import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.ui.content.ContentFactory
 import com.song.smoker.SmokerLlmSettingsDialog
 import com.song.smoker.UnifiedLauncher
+import com.song.smoker.screenindex.MigrateUiDataSourceAction
 import com.song.smoker.screenindex.ScanUiDataSourceAction
 
 class DetektAgentToolWindowFactory : ToolWindowFactory, DumbAware {
@@ -24,6 +25,7 @@ class DetektAgentToolWindowFactory : ToolWindowFactory, DumbAware {
             listOf(
                 RunSmokerAction(),
                 ScanUiDataSourceAction(),
+                MigrateUiDataSourceAction(),
                 SmokerSettingsAction(),
             ),
         )

@@ -3,6 +3,7 @@ package com.song.smoker
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.ValidationInfo
+import com.intellij.ui.TitledSeparator
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
@@ -22,6 +23,9 @@ class SmokerLlmSettingsDialog(project: Project?) : DialogWrapper(project, true) 
     )
     private val modelIdField = JBTextField(settings.modelId, 30)
 
+    private val nextSpeakerEndpointField = JBTextField(settings.nextSpeakerEndpoint, 30)
+    private val nextSpeakerModelIdField = JBTextField(settings.nextSpeakerModelId, 30)
+
     init {
         title = "Smoker LLM Settings"
         setOKButtonText("Save")
@@ -36,15 +40,47 @@ class SmokerLlmSettingsDialog(project: Project?) : DialogWrapper(project, true) 
             anchor = GridBagConstraints.WEST
         }
 
-        gbc.gridx = 0; gbc.gridy = 0
+        var row = 0
+
+        gbc.gridx = 0; gbc.gridy = row; gbc.gridwidth = 2
+        gbc.fill = GridBagConstraints.HORIZONTAL; gbc.weightx = 1.0
+        panel.add(TitledSeparator("Main Agent LLM"), gbc)
+        gbc.gridwidth = 1; gbc.weightx = 0.0; gbc.fill = GridBagConstraints.NONE
+        row++
+
+        gbc.gridx = 0; gbc.gridy = row
         panel.add(JBLabel("Endpoint URL:"), gbc)
         gbc.gridx = 1; gbc.fill = GridBagConstraints.HORIZONTAL; gbc.weightx = 1.0
         panel.add(endpointField, gbc)
+        gbc.weightx = 0.0; gbc.fill = GridBagConstraints.NONE
+        row++
 
-        gbc.gridx = 0; gbc.gridy = 1; gbc.fill = GridBagConstraints.NONE; gbc.weightx = 0.0
+        gbc.gridx = 0; gbc.gridy = row
         panel.add(JBLabel("Model ID:"), gbc)
         gbc.gridx = 1; gbc.fill = GridBagConstraints.HORIZONTAL; gbc.weightx = 1.0
         panel.add(modelIdField, gbc)
+        gbc.weightx = 0.0; gbc.fill = GridBagConstraints.NONE
+        row++
+
+        gbc.gridx = 0; gbc.gridy = row; gbc.gridwidth = 2
+        gbc.fill = GridBagConstraints.HORIZONTAL; gbc.weightx = 1.0
+        gbc.insets = JBUI.insets(12, 4, 4, 4)
+        panel.add(TitledSeparator("Next-Speaker Judge LLM (optional, leave blank to skip)"), gbc)
+        gbc.gridwidth = 1; gbc.weightx = 0.0; gbc.fill = GridBagConstraints.NONE
+        gbc.insets = JBUI.insets(4)
+        row++
+
+        gbc.gridx = 0; gbc.gridy = row
+        panel.add(JBLabel("Endpoint URL:"), gbc)
+        gbc.gridx = 1; gbc.fill = GridBagConstraints.HORIZONTAL; gbc.weightx = 1.0
+        panel.add(nextSpeakerEndpointField, gbc)
+        gbc.weightx = 0.0; gbc.fill = GridBagConstraints.NONE
+        row++
+
+        gbc.gridx = 0; gbc.gridy = row
+        panel.add(JBLabel("Model ID:"), gbc)
+        gbc.gridx = 1; gbc.fill = GridBagConstraints.HORIZONTAL; gbc.weightx = 1.0
+        panel.add(nextSpeakerModelIdField, gbc)
 
         return panel
     }
@@ -55,12 +91,20 @@ class SmokerLlmSettingsDialog(project: Project?) : DialogWrapper(project, true) 
     override fun doValidate(): ValidationInfo? = when {
         endpointField.text.isBlank() -> ValidationInfo("Endpoint URL is required", endpointField)
         modelIdField.text.isBlank() -> ValidationInfo("Model ID is required", modelIdField)
+        nextSpeakerEndpointField.text.isBlank() != nextSpeakerModelIdField.text.isBlank() ->
+            ValidationInfo(
+                "Fill both Next-Speaker endpoint and model ID, or leave both blank",
+                if (nextSpeakerEndpointField.text.isBlank()) nextSpeakerEndpointField
+                else nextSpeakerModelIdField,
+            )
         else -> null
     }
 
     override fun doOKAction() {
         settings.endpoint = endpointField.text.trim()
         settings.modelId = modelIdField.text.trim()
+        settings.nextSpeakerEndpoint = nextSpeakerEndpointField.text.trim()
+        settings.nextSpeakerModelId = nextSpeakerModelIdField.text.trim()
         super.doOKAction()
     }
 }

@@ -14,6 +14,8 @@ class SmokerLlmSettings : PersistentStateComponent<SmokerLlmSettings.SettingsSta
     class SettingsState {
         var endpoint: String = ""
         var modelId: String = ""
+        var nextSpeakerEndpoint: String = ""
+        var nextSpeakerModelId: String = ""
     }
 
     private var state = SettingsState()
@@ -32,7 +34,18 @@ class SmokerLlmSettings : PersistentStateComponent<SmokerLlmSettings.SettingsSta
         get() = state.modelId
         set(value) { state.modelId = value }
 
+    var nextSpeakerEndpoint: String
+        get() = state.nextSpeakerEndpoint
+        set(value) { state.nextSpeakerEndpoint = value }
+
+    var nextSpeakerModelId: String
+        get() = state.nextSpeakerModelId
+        set(value) { state.nextSpeakerModelId = value }
+
     fun isConfigured(): Boolean = state.endpoint.isNotBlank() && state.modelId.isNotBlank()
+
+    fun isNextSpeakerConfigured(): Boolean =
+        state.nextSpeakerEndpoint.isNotBlank() && state.nextSpeakerModelId.isNotBlank()
 
     companion object {
         fun getInstance(): SmokerLlmSettings =

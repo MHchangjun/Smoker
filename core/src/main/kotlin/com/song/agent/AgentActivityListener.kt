@@ -7,6 +7,7 @@ interface AgentActivityListener {
     fun onToolCallFailed(name: String, message: String) {}
     fun onReasoning(text: String) {}
     fun onAssistant(text: String) {}
+    fun onLlmTokens(input: Int?, output: Int?, total: Int?) {}
 
     object NONE : AgentActivityListener
 }

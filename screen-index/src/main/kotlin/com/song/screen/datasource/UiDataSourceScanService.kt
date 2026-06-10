@@ -2,7 +2,7 @@ package com.song.screen.datasource
 
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
-import com.song.screen.refreshProjectRootInVfs
+import com.intellij.openapi.vfs.LocalFileSystem
 import java.io.File
 
 /**
@@ -21,7 +21,8 @@ class UiDataSourceScanService(
 
     suspend fun run(projectRoot: File, log: (String) -> Unit = {}): UiDataSourceScanReport {
         log("[ui-datasource] phase begin root=${projectRoot.absolutePath}")
-        refreshProjectRootInVfs(projectRoot)
+
+        LocalFileSystem.getInstance().refreshAndFindFileByIoFile(projectRoot)
 
         val dumb = DumbService.getInstance(project)
         dumb.waitForSmartMode()

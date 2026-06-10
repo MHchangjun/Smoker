@@ -5,6 +5,7 @@ import com.song.agent.AgentActivityListener
 import com.song.agent.CodeSmellAgent
 import com.song.agent.EditorSessionManager
 import com.song.agent.LintFixAgent
+import com.song.agent.UiDataSourceMigrationAgent
 import com.song.agent.tool.di.toolModule
 import com.song.git.GitCli
 import com.song.git.PullRequestPublishService
@@ -30,6 +31,14 @@ fun coreModule(root: Path, project: Project): Module = module {
 
     single {
         LintFixAgent(
+            root.toAbsolutePath().normalize().toString(),
+            get(), get(), get(), get(), get(), get(),
+            getOrNull<AgentActivityListener>() ?: AgentActivityListener.NONE,
+        )
+    }
+
+    single {
+        UiDataSourceMigrationAgent(
             root.toAbsolutePath().normalize().toString(),
             get(), get(), get(), get(), get(), get(),
             getOrNull<AgentActivityListener>() ?: AgentActivityListener.NONE,

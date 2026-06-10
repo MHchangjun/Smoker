@@ -22,6 +22,11 @@ internal fun strictDiagnosticsStrategy(): AIAgentGraphStrategy<String, String> =
                 requestLLMMultiple()
             }
         }
+        val nodeNextSpeakerCheck by node<List<Message.Assistant>, NextSpeakerOutcome>(
+            "next_speaker_check"
+        ) { assistants ->
+            decideNextSpeaker(assistants)
+        }
 
         edge(nodeStart forwardTo nodeCallLLM)
 
@@ -32,10 +37,9 @@ internal fun strictDiagnosticsStrategy(): AIAgentGraphStrategy<String, String> =
                 onCondition { hasUnresolvedDiagnostics() }
         )
         edge(
-            nodeCallLLM forwardTo nodeFinish
+            nodeCallLLM forwardTo nodeNextSpeakerCheck
                 onMultipleAssistantMessages { true }
                 onCondition { !hasUnresolvedDiagnostics() }
-                transformed { it.joinToString("\n") { message -> message.content } }
         )
 
         edge(nodeExecuteTool forwardTo nodeSendToolResult)
@@ -47,10 +51,9 @@ internal fun strictDiagnosticsStrategy(): AIAgentGraphStrategy<String, String> =
                 onCondition { hasUnresolvedDiagnostics() }
         )
         edge(
-            nodeSendToolResult forwardTo nodeFinish
+            nodeSendToolResult forwardTo nodeNextSpeakerCheck
                 onMultipleAssistantMessages { true }
                 onCondition { !hasUnresolvedDiagnostics() }
-                transformed { it.joinToString("\n") { message -> message.content } }
         )
 
         edge(nodeNagPendingErrors forwardTo nodeExecuteTool onMultipleToolCalls { true })
@@ -60,10 +63,20 @@ internal fun strictDiagnosticsStrategy(): AIAgentGraphStrategy<String, String> =
                 onCondition { hasUnresolvedDiagnostics() }
         )
         edge(
-            nodeNagPendingErrors forwardTo nodeFinish
+            nodeNagPendingErrors forwardTo nodeNextSpeakerCheck
                 onMultipleAssistantMessages { true }
                 onCondition { !hasUnresolvedDiagnostics() }
-                transformed { it.joinToString("\n") { message -> message.content } }
+        )
+
+        edge(
+            nodeNextSpeakerCheck forwardTo nodeFinish
+                onIsInstance NextSpeakerOutcome.Finish::class
+                transformed { it.content }
+        )
+        edge(
+            nodeNextSpeakerCheck forwardTo nodeCallLLM
+                onIsInstance NextSpeakerOutcome.Continue::class
+                transformed { PLEASE_CONTINUE_MESSAGE }
         )
     }
 

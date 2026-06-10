@@ -157,10 +157,12 @@ private fun ensureTargetEditors(project: Project, vFile: VirtualFile): Set<FileE
     var editors = emptySet<FileEditor>()
     ApplicationManager.getApplication().invokeAndWait {
         val fileEditorManager = FileEditorManager.getInstance(project)
-        editors = fileEditorManager.getAllEditors(vFile).toSet()
-        println("[smoker-diag] existingEditors=${editors.size} file=${vFile.path}")
-        if (editors.isEmpty()) {
-            val openedEditors = fileEditorManager.openFile(vFile, false).toSet()
+        val selected = fileEditorManager.getSelectedEditor(vFile)
+        println("[smoker-diag] selectedEditor=${selected != null} file=${vFile.path}")
+        if (selected != null) {
+            editors = setOf(selected)
+        } else {
+            val openedEditors = fileEditorManager.openFile(vFile, true).toSet()
             println("[smoker-diag] openFile invoked openedEditors=${openedEditors.size} file=${vFile.path}")
             editors = if (openedEditors.isNotEmpty()) {
                 openedEditors

@@ -413,4 +413,6 @@ fun composeActivityListeners(vararg listeners: AgentActivityListener): AgentActi
             listeners.forEach { it.onToolCallFailed(name, message) }
         override fun onReasoning(text: String) = listeners.forEach { it.onReasoning(text) }
         override fun onAssistant(text: String) = listeners.forEach { it.onAssistant(text) }
+        override fun onLlmTokens(input: Int?, output: Int?, total: Int?) =
+            listeners.forEach { it.onLlmTokens(input, output, total) }
     }
