@@ -53,35 +53,6 @@ class UiDataSourceMigrationPromptBuilder {
                 }
 
             appendTargetSection(this, target, isComposable, displayCaller)
-
-            appendLine("## What to do")
-            appendLine()
-            appendLine(
-                if (single)
-                    "- Migrate this access following the workflow defined in the system prompt."
-                else
-                    "- For each violation above, follow the workflow defined in the system prompt.",
-            )
-            if (isComposable) {
-                appendLine("- Place the ViewModel inside the host that owns the `ViewModelStoreOwner`")
-                appendLine("  (see the **Target host** section). Inside a Composable destination obtain it")
-                appendLine("  via `hiltViewModel()` / `viewModel()`; for an Activity/Fragment host pass it in as")
-                appendLine("  a parameter or obtain it at the call site.")
-                appendLine("- If several hosts are listed, prefer one shared ViewModel scoped to the nearest")
-                appendLine("  common owner; only split per host if the state genuinely differs.")
-            } else {
-                appendLine("- Land the change in the ViewModel for `$displayCaller`. Reuse the ViewModel listed")
-                appendLine("  in the **Target ViewModel** section if any; otherwise create one matching the")
-                appendLine("  project's convention.")
-            }
-            appendLine("- The ViewModel calls the same wrapper / util / object the UI used to call")
-            appendLine("  (e.g. `PrefUtil.getBoolean`, `NetworkUtil.isOnline`, `DataProvider<X>(...).request()`).")
-            appendLine("  Do NOT introduce a Repository, interface, or any new abstraction layer.")
-            appendLine("- Leaves accessed inside `attachBaseContext` are exempt — skip them per Rule 5.")
-            appendLine()
-            appendLine("Finish with a single-line summary in this format:")
-            appendLine()
-            appendLine("`migrate(ui-datasource): $displayCaller → <ViewModel>  (<N> leaf accesses moved)`")
         }.trimEnd()
     }
 
@@ -123,15 +94,12 @@ class UiDataSourceMigrationPromptBuilder {
             sb.appendLine()
             return
         }
-        if (target.existingViewModels.size == 1) {
-            sb.appendLine("Use the ViewModel already wired to this UI class:")
-        } else {
-            sb.appendLine("This UI already references ${target.existingViewModels.size} ViewModels — pick the one")
-            sb.appendLine("that semantically matches the data being moved:")
+        if (target.existingViewModels.size > 1) {
+            sb.appendLine("Pick the one that semantically matches the data being moved:")
+            sb.appendLine()
         }
-        sb.appendLine()
-        target.existingViewModels.forEachIndexed { i, vm ->
-            sb.appendLine("${i + 1}. ${renderViewModel(vm)}")
+        target.existingViewModels.forEach { vm ->
+            sb.appendLine("- ${vm.filePath ?: vm.fqn ?: "(unknown)"}")
         }
         sb.appendLine()
     }
@@ -150,16 +118,6 @@ class UiDataSourceMigrationPromptBuilder {
         is HostCandidate.Unresolved -> {
             "Call site at ${shortPath(host.filePath)}:${host.line} — could not classify (${host.reason})"
         }
-    }
-
-    private fun renderViewModel(vm: ExistingViewModel): String {
-        val location = when {
-            vm.filePath != null && vm.fileLine != null -> " — declared at ${shortPath(vm.filePath)}:${vm.fileLine}"
-            vm.fqn != null -> ""
-            else -> " — type erased (delegate without generic)"
-        }
-        val name = vm.fqn ?: "(unknown ViewModel type)"
-        return "`$name`$location\n   accessor: `${vm.accessor}`"
     }
 
     private fun renderCallChain(chain: List<ComposableCallHop>): String =
